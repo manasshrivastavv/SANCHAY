@@ -2,10 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import {
   useClerk,
   useUser,
-  useSession,
+  useSession
+} from '@clerk/react';
+import {
   useSignIn,
   useSignUp
-} from '@clerk/react';
+} from '@clerk/react/legacy';
 
 import {
   getCurrentUser,
@@ -201,18 +203,46 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
 
   // 1. CONTINUE WITH GOOGLE (Official Clerk OAuth integration)
   const loginWithGoogle = async () => {
-    if (!isClerkConfigured || !signIn) {
+    if (!isClerkConfigured) {
       throw new Error('Clerk is not configured. Please add VITE_CLERK_PUBLISHABLE_KEY to your .env file.');
     }
     try {
       const returnUrl = (typeof window !== 'undefined' && window.location.pathname && window.location.pathname !== '/sso-callback')
         ? window.location.pathname
         : '/';
-      await signIn.authenticateWithRedirect({
+
+      const redirectParams = {
         strategy: 'oauth_google',
         redirectUrl: '/sso-callback',
         redirectUrlComplete: returnUrl
-      });
+      };
+
+      // Priority 1: signIn.authenticateWithRedirect
+      if (signIn && typeof signIn.authenticateWithRedirect === 'function') {
+        return await signIn.authenticateWithRedirect(redirectParams);
+      }
+
+      // Priority 2: clerk.authenticateWithRedirect
+      if (clerk && typeof clerk.authenticateWithRedirect === 'function') {
+        return await clerk.authenticateWithRedirect(redirectParams);
+      }
+
+      // Priority 3: clerk.client.signIn.authenticateWithRedirect
+      if (clerk?.client?.signIn && typeof clerk.client.signIn.authenticateWithRedirect === 'function') {
+        return await clerk.client.signIn.authenticateWithRedirect(redirectParams);
+      }
+
+      // Priority 4: signUp.authenticateWithRedirect
+      if (signUp && typeof signUp.authenticateWithRedirect === 'function') {
+        return await signUp.authenticateWithRedirect(redirectParams);
+      }
+
+      // Priority 5: clerk.client.signUp.authenticateWithRedirect
+      if (clerk?.client?.signUp && typeof clerk.client.signUp.authenticateWithRedirect === 'function') {
+        return await clerk.client.signUp.authenticateWithRedirect(redirectParams);
+      }
+
+      throw new Error('Google Sign-In is initializing. Please wait a moment and try again.');
     } catch (err) {
       console.error('[CLERK_GOOGLE] Google OAuth initiation failed:', err);
       throw err;
