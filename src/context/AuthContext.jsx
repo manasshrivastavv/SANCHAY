@@ -207,27 +207,43 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
       throw new Error('Clerk is not configured. Please add VITE_CLERK_PUBLISHABLE_KEY to your .env file.');
     }
     try {
-      const returnUrl = (typeof window !== 'undefined' && window.location.pathname && window.location.pathname !== '/sso-callback')
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      const returnPath = (typeof window !== 'undefined' && window.location.pathname && window.location.pathname !== '/sso-callback')
         ? window.location.pathname
         : '/';
 
+      const ssoCallbackUrl = `${origin}/sso-callback`;
+      const completeUrl = `${origin}${returnPath}`;
+
       const redirectParams = {
         strategy: 'oauth_google',
-        redirectUrl: '/sso-callback',
-        redirectUrlComplete: returnUrl
+        redirectUrl: ssoCallbackUrl,
+        redirectUrlComplete: completeUrl,
+        continueSignUpUrl: ssoCallbackUrl,
       };
 
-      // Priority 1: signIn.authenticateWithRedirect
-      if (signIn && typeof signIn.authenticateWithRedirect === 'function') {
-        return await signIn.authenticateWithRedirect(redirectParams);
-      }
-
-      // Priority 2: clerk.authenticateWithRedirect
+      // Priority 1: clerk.authenticateWithRedirect (Official unified OAuth flow that handles both sign-in & sign-up)
       if (clerk && typeof clerk.authenticateWithRedirect === 'function') {
         return await clerk.authenticateWithRedirect(redirectParams);
       }
 
-      // Priority 3: clerk.client.signIn.authenticateWithRedirect
+      // Priority 2: signIn.authenticateWithRedirect with fallback to signUp
+      if (signIn && typeof signIn.authenticateWithRedirect === 'function') {
+        try {
+          return await signIn.authenticateWithRedirect({
+            ...redirectParams,
+            signUpFallbackRedirectUrl: ssoCallbackUrl
+          });
+        } catch (siErr) {
+          console.warn('[CLERK_GOOGLE] signIn.authenticateWithRedirect error, trying signUp:', siErr);
+          if (signUp && typeof signUp.authenticateWithRedirect === 'function') {
+            return await signUp.authenticateWithRedirect(redirectParams);
+          }
+          throw siErr;
+        }
+      }
+
+      // Priority 3: clerk.client.signIn with signUp fallback
       if (clerk?.client?.signIn && typeof clerk.client.signIn.authenticateWithRedirect === 'function') {
         return await clerk.client.signIn.authenticateWithRedirect(redirectParams);
       }
