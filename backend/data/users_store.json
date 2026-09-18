@@ -16071,5 +16071,43 @@
     "saved_plans": [],
     "created_at": "2026-09-13T08:33:42.148663+00:00",
     "verified_at": "2026-09-13T08:33:42.171318+00:00"
+  },
+  {
+    "_id": "fb_123",
+    "firebase_uid": "fb_123",
+    "user_id": "fb_123",
+    "full_name": "Test Citizen",
+    "email": "test@test.com",
+    "phone": "+919876543210",
+    "mobile": "+919876543210",
+    "age": null,
+    "gender": "",
+    "profession": "",
+    "avatar_id": "male_2",
+    "profile_photo": null,
+    "is_verified": true,
+    "auth_provider": "firebase",
+    "saved_plans": [],
+    "created_at": "2026-09-18T17:22:54.283214+00:00",
+    "updated_at": "2026-09-18T17:22:54.283214+00:00"
+  },
+  {
+    "_id": "123",
+    "firebase_uid": "123",
+    "user_id": "123",
+    "full_name": "Citizen",
+    "email": "",
+    "phone": "",
+    "mobile": "",
+    "age": null,
+    "gender": "",
+    "profession": "",
+    "avatar_id": "female_2",
+    "profile_photo": null,
+    "is_verified": true,
+    "auth_provider": "firebase",
+    "saved_plans": [],
+    "created_at": "2026-09-18T17:23:06.232005+00:00",
+    "updated_at": "2026-09-18T17:23:06.232005+00:00"
   }
 ]

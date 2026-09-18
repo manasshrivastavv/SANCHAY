@@ -1,10 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
-  signOut,
-  RecaptchaVerifier,
-  signInWithPhoneNumber
+  signOut
 } from 'firebase/auth';
 import { auth, googleProvider } from '../firebase';
 import {
@@ -60,14 +58,9 @@ export const AuthProvider = ({ children }) => {
 
   // Auth Modal State
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState('login'); // 'login' | 'otp' | 'limit_reached'
-  const [pendingPhone, setPendingPhone] = useState('');
 
   // Complete Profile Modal State (prompt after Google connect or on-demand)
   const [isCompleteProfileModalOpen, setIsCompleteProfileModalOpen] = useState(false);
-
-  // Firebase Phone Confirmation Result ref
-  const confirmationResultRef = useRef(null);
 
   // Guest usage tracker for 2 free uses
   const [guestUsageCount, setGuestUsageCount] = useState(() => {
@@ -206,9 +199,7 @@ export const AuthProvider = ({ children }) => {
     }
   }, [user]);
 
-  const openAuthModal = useCallback((mode = 'login', phone = '') => {
-    setAuthModalMode(mode);
-    if (phone) setPendingPhone(phone);
+  const openAuthModal = useCallback(() => {
     setIsAuthModalOpen(true);
   }, []);
 
@@ -243,101 +234,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Helper to get or create invisible RecaptchaVerifier
-  const getRecaptchaVerifier = () => {
-    if (typeof window === 'undefined') return null;
-
-    if (window.recaptchaVerifier) {
-      try {
-        window.recaptchaVerifier.clear();
-      } catch (e) {
-        console.warn('Recaptcha clear notice:', e);
-      }
-      window.recaptchaVerifier = null;
-    }
-
-    const container = document.getElementById('recaptcha-container');
-    if (!container) {
-      throw new Error('reCAPTCHA container element (#recaptcha-container) not found in DOM.');
-    }
-
-    window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
-      size: 'invisible',
-      callback: () => {
-        // Solved
-      },
-      'expired-callback': () => {
-        console.warn('reCAPTCHA expired. Please try requesting OTP again.');
-      }
-    });
-
-    return window.recaptchaVerifier;
-  };
-
-  // 2. MOBILE SMS OTP: SEND OTP
-  const startMobileOtp = async (rawPhone) => {
-    if (!auth) {
-      throw new Error('Firebase authentication is not initialized.');
-    }
-
-    const formattedPhone = formatIndianPhone(rawPhone);
-    if (!formattedPhone || formattedPhone.length !== 13 || !formattedPhone.startsWith('+91')) {
-      throw new Error('Please enter a valid 10-digit Indian mobile number.');
-    }
-
-    setPendingPhone(formattedPhone);
-
-    try {
-      const appVerifier = getRecaptchaVerifier();
-      const confirmationResult = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
-      confirmationResultRef.current = confirmationResult;
-      setAuthModalMode('otp');
-      return { success: true, phone: formattedPhone };
-    } catch (err) {
-      console.error('[FIREBASE_PHONE] Send SMS OTP failed:', err);
-      // Reset reCAPTCHA if error occurs
-      if (window.recaptchaVerifier) {
-        try {
-          window.recaptchaVerifier.clear();
-        } catch (e) {
-          // ignore
-        }
-        window.recaptchaVerifier = null;
-      }
-      throw err;
-    }
-  };
-
-  // 3. MOBILE SMS OTP: VERIFY OTP
-  const verifyMobileOtp = async (code) => {
-    if (!code || code.trim().length !== 6) {
-      throw new Error('Please enter the 6-digit OTP sent to your phone.');
-    }
-
-    if (!confirmationResultRef.current) {
-      throw new Error('No active OTP verification session found. Please request a new OTP.');
-    }
-
-    const cleanCode = code.trim();
-    try {
-      const userCredential = await confirmationResultRef.current.confirm(cleanCode);
-      closeAuthModal();
-      return { success: true, user: userCredential.user };
-    } catch (err) {
-      console.error('[FIREBASE_PHONE] OTP Verification failed:', err);
-      throw err;
-    }
-  };
-
-  // 4. RESEND SMS OTP
-  const resendMobileOtp = async () => {
-    if (!pendingPhone) {
-      throw new Error('No pending mobile number to resend OTP to.');
-    }
-    return await startMobileOtp(pendingPhone);
-  };
-
-  // 5. OFFICIAL SIGNOUT
+  // 2. OFFICIAL SIGNOUT
   const logout = async () => {
     try {
       if (auth) {
@@ -408,7 +305,7 @@ export const AuthProvider = ({ children }) => {
   const addToMyPlans = async (schemeId) => {
     if (!schemeId) return false;
     if (!firebaseUser && !user) {
-      openAuthModal('login');
+      openAuthModal();
       return false;
     }
 
@@ -513,8 +410,6 @@ export const AuthProvider = ({ children }) => {
         isLoadingUser,
         savedPlanIds,
         isAuthModalOpen,
-        authModalMode,
-        pendingPhone,
         isCompleteProfileModalOpen,
         guestUsageCount,
         maxFreeGuestUses: MAX_FREE_GUEST_USES,
@@ -525,9 +420,6 @@ export const AuthProvider = ({ children }) => {
         openCompleteProfileModal,
         closeCompleteProfileModal,
         loginWithGoogle,
-        startMobileOtp,
-        verifyMobileOtp,
-        resendMobileOtp,
         logout,
         uploadProfilePhoto,
         changeAvatar,
