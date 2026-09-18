@@ -11,4 +11,4 @@ dnspython>=2.6.1
 certifi>=2024.2.2
 pyjwt>=2.8.0
 cryptography>=50.0.0
-
+firebase-admin>=6.5.0

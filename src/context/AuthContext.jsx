@@ -1,17 +1,15 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
-  useClerk,
-  useUser,
-  useSession
-} from '@clerk/react';
-import {
-  useSignIn,
-  useSignUp
-} from '@clerk/react/legacy';
-
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  RecaptchaVerifier,
+  signInWithPhoneNumber
+} from 'firebase/auth';
+import { auth, googleProvider } from '../firebase';
 import {
   getCurrentUser,
-  syncClerkUserApi,
+  syncFirebaseUserApi,
   uploadProfilePhotoApi,
   updateAvatarApi,
   updateUserProfileApi,
@@ -45,17 +43,7 @@ export function formatIndianPhone(phone) {
   return `+91${digits}`;
 }
 
-/**
- * Inner component that mounts inside <ClerkProvider> to bind Clerk's hooks
- * and expose unified authentication methods across SANCHAY.
- */
-export const AuthProvider = ({ children, isClerkConfigured = true }) => {
-  const clerk = isClerkConfigured ? useClerk() : null;
-  const { isLoaded: isUserLoaded, isSignedIn, user: clerkUser } = isClerkConfigured ? useUser() : { isLoaded: true, isSignedIn: false, user: null };
-  const { session } = isClerkConfigured ? useSession() : { session: null };
-  const { isLoaded: isSignInLoaded, signIn, setActive: setSignInActive } = isClerkConfigured ? useSignIn() : { isLoaded: true, signIn: null, setActive: null };
-  const { isLoaded: isSignUpLoaded, signUp, setActive: setSignUpActive } = isClerkConfigured ? useSignUp() : { isLoaded: true, signUp: null, setActive: null };
-
+export const AuthProvider = ({ children }) => {
   // SANCHAY user document (synced from MongoDB via FastAPI)
   const [user, setUser] = useState(() => {
     try {
@@ -65,6 +53,7 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
       return null;
     }
   });
+  const [firebaseUser, setFirebaseUser] = useState(null);
   const [token, setToken] = useState(null);
   const [savedPlanIds, setSavedPlanIds] = useState(() => new Set(user?.saved_plans || []));
   const [isLoadingUser, setIsLoadingUser] = useState(true);
@@ -73,7 +62,9 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState('login'); // 'login' | 'otp' | 'limit_reached'
   const [pendingPhone, setPendingPhone] = useState('');
-  const [otpFlow, setOtpFlow] = useState('sign_in'); // 'sign_in' | 'sign_up'
+
+  // Firebase Phone Confirmation Result ref
+  const confirmationResultRef = useRef(null);
 
   // Guest usage tracker for 2 free uses
   const [guestUsageCount, setGuestUsageCount] = useState(() => {
@@ -81,76 +72,77 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
     return saved ? parseInt(saved, 10) : 0;
   });
 
-  // Sync token provider whenever Clerk session changes
+  // Setup auth token provider for api.js
   useEffect(() => {
-    if (session) {
+    if (auth) {
       setAuthTokenProvider(async () => {
         try {
-          return await session.getToken();
+          if (auth.currentUser) {
+            return await auth.currentUser.getIdToken();
+          }
+          return null;
         } catch (err) {
+          console.warn('[AUTH_CONTEXT] Failed to resolve Firebase ID token:', err);
           return null;
         }
       });
-      session.getToken().then(t => setToken(t)).catch(() => setToken(null));
     } else {
       setAuthTokenProvider(null);
-      setToken(null);
     }
-  }, [session]);
+  }, []);
 
-  // Sync user profile with FastAPI & MongoDB whenever Clerk auth status changes
+  // Listen to Firebase Auth state changes
   useEffect(() => {
+    if (!auth) {
+      setIsLoadingUser(false);
+      return;
+    }
+
     let isCancelled = false;
 
-    if (!isUserLoaded) return;
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
 
-    if (isSignedIn && clerkUser && session) {
-      setIsLoadingUser(true);
-      session.getToken()
-        .then(async (jwtToken) => {
+      if (fbUser) {
+        setIsLoadingUser(true);
+        try {
+          const idToken = await fbUser.getIdToken();
           if (isCancelled) return;
-          if (!jwtToken) {
-            setIsLoadingUser(false);
-            return;
-          }
+          setToken(idToken);
 
-          setToken(jwtToken);
-
-          // Extract verified identifiers from Clerk User
-          const primaryEmail = clerkUser.primaryEmailAddress?.emailAddress || clerkUser.emailAddresses?.[0]?.emailAddress || '';
-          const primaryPhone = clerkUser.primaryPhoneNumber?.phoneNumber || clerkUser.phoneNumbers?.[0]?.phoneNumber || '';
-          const fullName = clerkUser.fullName || `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || 'Citizen';
-          const imageUrl = clerkUser.imageUrl || null;
+          const primaryEmail = fbUser.email || '';
+          const primaryPhone = fbUser.phoneNumber || '';
+          const fullName = fbUser.displayName || 'Citizen';
+          const imageUrl = fbUser.photoURL || null;
 
           try {
-            // First attempt to get current user from backend
-            let backendUser = await getCurrentUser(jwtToken);
+            // Check if profile exists in backend
+            let backendUser = await getCurrentUser(idToken);
             if (backendUser && !backendUser.unauthorized) {
               if (!isCancelled) {
                 setUser(backendUser);
                 localStorage.setItem(USER_KEY, JSON.stringify(backendUser));
               }
             } else {
-              // Sync user profile into MongoDB via sync endpoint
-              const syncRes = await syncClerkUserApi({
+              // Sync user into MongoDB via FastAPI
+              const syncRes = await syncFirebaseUserApi({
                 email: primaryEmail,
                 phone: primaryPhone,
                 full_name: fullName,
                 profile_photo: imageUrl
-              }, jwtToken);
+              }, idToken);
 
               if (syncRes?.user && !isCancelled) {
                 setUser(syncRes.user);
                 localStorage.setItem(USER_KEY, JSON.stringify(syncRes.user));
               }
             }
-          } catch (err) {
-            console.warn('[AUTH_CONTEXT] Backend profile sync offline, using local Clerk session:', err);
-            // Construct baseline local user object
+          } catch (backendErr) {
+            console.warn('[AUTH_CONTEXT] Backend profile sync offline, using local Firebase session:', backendErr);
             if (!isCancelled) {
               const fallbackUser = {
-                clerk_user_id: clerkUser.id,
-                user_id: clerkUser.id,
+                firebase_uid: fbUser.uid,
+                user_id: fbUser.uid,
                 full_name: fullName,
                 email: primaryEmail,
                 phone: primaryPhone,
@@ -162,25 +154,26 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
               setUser(fallbackUser);
               localStorage.setItem(USER_KEY, JSON.stringify(fallbackUser));
             }
-          } finally {
-            if (!isCancelled) setIsLoadingUser(false);
           }
-        })
-        .catch(() => {
+        } catch (err) {
+          console.error('[AUTH_CONTEXT] Error processing auth state change:', err);
+        } finally {
           if (!isCancelled) setIsLoadingUser(false);
-        });
-    } else {
-      // Signed out
-      setUser(null);
-      setToken(null);
-      localStorage.removeItem(USER_KEY);
-      setIsLoadingUser(false);
-    }
+        }
+      } else {
+        // Signed out
+        setUser(null);
+        setToken(null);
+        localStorage.removeItem(USER_KEY);
+        setIsLoadingUser(false);
+      }
+    });
 
     return () => {
       isCancelled = true;
+      unsubscribe();
     };
-  }, [isSignedIn, clerkUser, session, isUserLoaded]);
+  }, []);
 
   // Sync saved plan IDs set
   useEffect(() => {
@@ -201,119 +194,83 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
     setIsAuthModalOpen(false);
   }, []);
 
-  // 1. CONTINUE WITH GOOGLE (Official Clerk OAuth integration)
+  // 1. CONTINUE WITH GOOGLE (Firebase OAuth popup)
   const loginWithGoogle = async () => {
-    if (!isClerkConfigured) {
-      throw new Error('Clerk is not configured. Please add VITE_CLERK_PUBLISHABLE_KEY to your .env file.');
+    if (!auth || !googleProvider) {
+      throw new Error('Firebase authentication is not initialized. Please verify configuration.');
     }
     try {
-      const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      const returnPath = (typeof window !== 'undefined' && window.location.pathname && window.location.pathname !== '/sso-callback')
-        ? window.location.pathname
-        : '/';
-
-      const ssoCallbackUrl = `${origin}/sso-callback`;
-      const completeUrl = `${origin}${returnPath}`;
-
-      const redirectParams = {
-        strategy: 'oauth_google',
-        redirectUrl: ssoCallbackUrl,
-        redirectUrlComplete: completeUrl,
-        continueSignUpUrl: ssoCallbackUrl,
-      };
-
-      // Priority 1: clerk.authenticateWithRedirect (Official unified OAuth flow that handles both sign-in & sign-up)
-      if (clerk && typeof clerk.authenticateWithRedirect === 'function') {
-        return await clerk.authenticateWithRedirect(redirectParams);
-      }
-
-      // Priority 2: signIn.authenticateWithRedirect with fallback to signUp
-      if (signIn && typeof signIn.authenticateWithRedirect === 'function') {
-        try {
-          return await signIn.authenticateWithRedirect({
-            ...redirectParams,
-            signUpFallbackRedirectUrl: ssoCallbackUrl
-          });
-        } catch (siErr) {
-          console.warn('[CLERK_GOOGLE] signIn.authenticateWithRedirect error, trying signUp:', siErr);
-          if (signUp && typeof signUp.authenticateWithRedirect === 'function') {
-            return await signUp.authenticateWithRedirect(redirectParams);
-          }
-          throw siErr;
-        }
-      }
-
-      // Priority 3: clerk.client.signIn with signUp fallback
-      if (clerk?.client?.signIn && typeof clerk.client.signIn.authenticateWithRedirect === 'function') {
-        return await clerk.client.signIn.authenticateWithRedirect(redirectParams);
-      }
-
-      // Priority 4: signUp.authenticateWithRedirect
-      if (signUp && typeof signUp.authenticateWithRedirect === 'function') {
-        return await signUp.authenticateWithRedirect(redirectParams);
-      }
-
-      // Priority 5: clerk.client.signUp.authenticateWithRedirect
-      if (clerk?.client?.signUp && typeof clerk.client.signUp.authenticateWithRedirect === 'function') {
-        return await clerk.client.signUp.authenticateWithRedirect(redirectParams);
-      }
-
-      throw new Error('Google Sign-In is initializing. Please wait a moment and try again.');
+      const result = await signInWithPopup(auth, googleProvider);
+      closeAuthModal();
+      return result;
     } catch (err) {
-      console.error('[CLERK_GOOGLE] Google OAuth initiation failed:', err);
+      console.error('[FIREBASE_GOOGLE] Google Sign-In failed:', err);
       throw err;
     }
   };
 
+  // Helper to get or create invisible RecaptchaVerifier
+  const getRecaptchaVerifier = () => {
+    if (typeof window === 'undefined') return null;
+
+    if (window.recaptchaVerifier) {
+      try {
+        window.recaptchaVerifier.clear();
+      } catch (e) {
+        console.warn('Recaptcha clear notice:', e);
+      }
+      window.recaptchaVerifier = null;
+    }
+
+    const container = document.getElementById('recaptcha-container');
+    if (!container) {
+      throw new Error('reCAPTCHA container element (#recaptcha-container) not found in DOM.');
+    }
+
+    window.recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+      size: 'invisible',
+      callback: () => {
+        // Solved
+      },
+      'expired-callback': () => {
+        console.warn('reCAPTCHA expired. Please try requesting OTP again.');
+      }
+    });
+
+    return window.recaptchaVerifier;
+  };
+
   // 2. MOBILE SMS OTP: SEND OTP
   const startMobileOtp = async (rawPhone) => {
-    if (!isClerkConfigured || !signIn || !signUp) {
-      throw new Error('Clerk is not configured. Please add VITE_CLERK_PUBLISHABLE_KEY to your .env file.');
+    if (!auth) {
+      throw new Error('Firebase authentication is not initialized.');
     }
 
     const formattedPhone = formatIndianPhone(rawPhone);
-    if (!formattedPhone || formattedPhone.length < 13) {
+    if (!formattedPhone || formattedPhone.length !== 13 || !formattedPhone.startsWith('+91')) {
       throw new Error('Please enter a valid 10-digit Indian mobile number.');
     }
 
     setPendingPhone(formattedPhone);
 
-    // Attempt Sign In first
     try {
-      const si = await signIn.create({ identifier: formattedPhone });
-      const phoneCodeFactor = si.supportedFirstFactors?.find(
-        (f) => f.strategy === 'phone_code'
-      );
-
-      if (phoneCodeFactor) {
-        await si.prepareFirstFactor({
-          strategy: 'phone_code',
-          phoneNumberId: phoneCodeFactor.phoneNumberId
-        });
-        setOtpFlow('sign_in');
-        setAuthModalMode('otp');
-        return { success: true, mode: 'sign_in', phone: formattedPhone };
-      } else {
-        throw new Error('SMS verification factor not available for this number.');
-      }
+      const appVerifier = getRecaptchaVerifier();
+      const confirmationResult = await signInWithPhoneNumber(auth, formattedPhone, appVerifier);
+      confirmationResultRef.current = confirmationResult;
+      setAuthModalMode('otp');
+      return { success: true, phone: formattedPhone };
     } catch (err) {
-      const firstError = err?.errors?.[0];
-      // If user does not exist yet, seamlessly create new account via Sign Up
-      if (firstError?.code === 'form_identifier_not_found') {
+      console.error('[FIREBASE_PHONE] Send SMS OTP failed:', err);
+      // Reset reCAPTCHA if error occurs
+      if (window.recaptchaVerifier) {
         try {
-          const su = await signUp.create({ phoneNumber: formattedPhone });
-          await su.preparePhoneNumberVerification({ strategy: 'phone_code' });
-          setOtpFlow('sign_up');
-          setAuthModalMode('otp');
-          return { success: true, mode: 'sign_up', phone: formattedPhone };
-        } catch (signUpErr) {
-          console.error('[CLERK_MOBILE] Sign up prepare failed:', signUpErr);
-          throw new Error(signUpErr?.errors?.[0]?.message || 'Failed to send SMS OTP. Please check the number.');
+          window.recaptchaVerifier.clear();
+        } catch (e) {
+          // ignore
         }
-      } else {
-        console.error('[CLERK_MOBILE] Sign in prepare failed:', err);
-        throw new Error(firstError?.message || 'Failed to send SMS OTP. Please try again.');
+        window.recaptchaVerifier = null;
       }
+      throw err;
     }
   };
 
@@ -323,80 +280,40 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
       throw new Error('Please enter the 6-digit OTP sent to your phone.');
     }
 
+    if (!confirmationResultRef.current) {
+      throw new Error('No active OTP verification session found. Please request a new OTP.');
+    }
+
     const cleanCode = code.trim();
-
     try {
-      if (otpFlow === 'sign_in') {
-        if (!signIn) throw new Error('Sign-in session not active.');
-        const result = await signIn.attemptFirstFactor({
-          strategy: 'phone_code',
-          code: cleanCode
-        });
-
-        if (result.status === 'complete') {
-          if (setSignInActive) {
-            await setSignInActive({ session: result.createdSessionId });
-          }
-          closeAuthModal();
-          return { success: true };
-        } else {
-          throw new Error('Verification incomplete. Please check OTP.');
-        }
-      } else {
-        if (!signUp) throw new Error('Sign-up session not active.');
-        const result = await signUp.attemptPhoneNumberVerification({
-          code: cleanCode
-        });
-
-        if (result.status === 'complete') {
-          if (setSignUpActive) {
-            await setSignUpActive({ session: result.createdSessionId });
-          }
-          closeAuthModal();
-          return { success: true };
-        } else {
-          throw new Error('Verification incomplete. Please check OTP.');
-        }
-      }
+      const userCredential = await confirmationResultRef.current.confirm(cleanCode);
+      closeAuthModal();
+      return { success: true, user: userCredential.user };
     } catch (err) {
-      console.error('[CLERK_MOBILE] Verification failed:', err);
-      const msg = err?.errors?.[0]?.message || err.message || 'Incorrect or expired OTP. Please try again.';
-      throw new Error(msg);
+      console.error('[FIREBASE_PHONE] OTP Verification failed:', err);
+      throw err;
     }
   };
 
   // 4. RESEND SMS OTP
   const resendMobileOtp = async () => {
-    if (!pendingPhone) throw new Error('No pending mobile number to resend OTP to.');
-    try {
-      if (otpFlow === 'sign_in') {
-        const factor = signIn.supportedFirstFactors?.find((f) => f.strategy === 'phone_code');
-        if (factor) {
-          await signIn.prepareFirstFactor({
-            strategy: 'phone_code',
-            phoneNumberId: factor.phoneNumberId
-          });
-        }
-      } else {
-        await signUp.preparePhoneNumberVerification({ strategy: 'phone_code' });
-      }
-      return { success: true };
-    } catch (err) {
-      const msg = err?.errors?.[0]?.message || err.message || 'Failed to resend OTP. Please wait before retrying.';
-      throw new Error(msg);
+    if (!pendingPhone) {
+      throw new Error('No pending mobile number to resend OTP to.');
     }
+    return await startMobileOtp(pendingPhone);
   };
 
-  // 5. OFFICIAL CLERK SIGNOUT
+  // 5. OFFICIAL SIGNOUT
   const logout = async () => {
     try {
-      if (clerk && typeof clerk.signOut === 'function') {
-        await clerk.signOut();
+      if (auth) {
+        await signOut(auth);
       }
     } catch (err) {
-      console.warn('Clerk signOut notice:', err);
+      console.warn('Firebase signOut notice:', err);
     } finally {
       setUser(null);
+      setFirebaseUser(null);
       setToken(null);
       setSavedPlanIds(new Set());
       localStorage.removeItem(USER_KEY);
@@ -434,7 +351,7 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
   // Saved Plans Management
   const addToMyPlans = async (schemeId) => {
     if (!schemeId) return false;
-    if (!isSignedIn && !user) {
+    if (!firebaseUser && !user) {
       openAuthModal('login');
       return false;
     }
@@ -519,12 +436,12 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
 
   // Find My Schemes guest evaluation tracker
   const canUseFindMySchemes = () => {
-    if (isSignedIn || user) return true;
+    if (firebaseUser || user) return true;
     return guestUsageCount < MAX_FREE_GUEST_USES;
   };
 
   const recordFindMySchemesUsage = () => {
-    if (isSignedIn || user) return;
+    if (firebaseUser || user) return;
     const nextCount = guestUsageCount + 1;
     setGuestUsageCount(nextCount);
     localStorage.setItem(GUEST_USAGE_KEY, nextCount.toString());
@@ -535,15 +452,17 @@ export const AuthProvider = ({ children, isClerkConfigured = true }) => {
       value={{
         token,
         user,
-        isAuthenticated: (isClerkConfigured ? isSignedIn : false) || (!!user && !!token),
-        isLoadingUser: isClerkConfigured ? (!isUserLoaded || isLoadingUser) : false,
+        firebaseUser,
+        isAuthenticated: !!firebaseUser || (!!user && !!token),
+        isLoadingUser,
         savedPlanIds,
         isAuthModalOpen,
         authModalMode,
         pendingPhone,
         guestUsageCount,
         maxFreeGuestUses: MAX_FREE_GUEST_USES,
-        isClerkConfigured,
+        isFirebaseConfigured: !!auth,
+        isClerkConfigured: false,
         openAuthModal,
         closeAuthModal,
         loginWithGoogle,

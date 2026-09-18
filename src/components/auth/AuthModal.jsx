@@ -8,10 +8,57 @@ import { useLanguage } from '../../context/LanguageContext';
 
 /**
  * Toggle for Phone/SMS OTP in UI.
- * Kept disabled for now while Clerk enables Indian (+91) SMS delivery.
- * Phone/SMS functions and UI logic are preserved intact below for future activation.
+ * Enabled for Firebase Authentication with Indian (+91) Mobile OTP.
  */
-const ENABLE_MOBILE_SMS = false;
+const ENABLE_MOBILE_SMS = true;
+
+// Helper to map Firebase error codes to friendly messages
+function getFriendlyErrorMessage(err, lang = 'en') {
+  const code = err?.code || '';
+  const msg = err?.message || '';
+
+  if (code === 'auth/invalid-phone-number') {
+    return lang === 'hi'
+      ? 'कृपया एक मान्य 10-अंकों का भारतीय मोबाइल नंबर दर्ज करें।'
+      : 'Please enter a valid 10-digit Indian mobile number.';
+  }
+  if (code === 'auth/invalid-verification-code') {
+    return lang === 'hi'
+      ? 'अमान्य OTP कोड। कृपया सही 6-अंकों का कोड दर्ज करें।'
+      : 'Invalid OTP. Please check the code and try again.';
+  }
+  if (code === 'auth/code-expired') {
+    return lang === 'hi'
+      ? 'OTP समाप्त हो गया है। कृपया पुनः नया OTP भेजें।'
+      : 'OTP has expired. Please request a new OTP.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return lang === 'hi'
+      ? 'बहुत अधिक प्रयास किए गए। कृपया कुछ समय बाद पुनः प्रयास करें।'
+      : 'Too many attempts. Please wait a few minutes before trying again.';
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return lang === 'hi'
+      ? 'Google साइन-इन रद्द कर दिया गया।'
+      : 'Google sign-in was cancelled.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return lang === 'hi'
+      ? 'नेटवर्क त्रुटि। कृपया अपना इंटरनेट कनेक्शन जांचें।'
+      : 'Network error. Please check your internet connection.';
+  }
+  if (code === 'auth/quota-exceeded') {
+    return lang === 'hi'
+      ? 'SMS सीमा समाप्त। कृपया कुछ समय बाद पुनः प्रयास करें या Google से लॉगिन करें।'
+      : 'SMS quota exceeded. Please try again later or sign in with Google.';
+  }
+  if (code === 'auth/captcha-check-failed') {
+    return lang === 'hi'
+      ? 'सुरक्षा सत्यापन (reCAPTCHA) विफल रहा। कृपया पुनः प्रयास करें।'
+      : 'reCAPTCHA verification failed. Please try again.';
+  }
+  return msg || (lang === 'hi' ? 'प्रमाणीकरण विफल रहा। कृपया पुनः प्रयास करें।' : 'Authentication failed. Please try again.');
+}
 
 export const AuthModal = () => {
   const {
@@ -23,7 +70,7 @@ export const AuthModal = () => {
     startMobileOtp,
     verifyMobileOtp,
     resendMobileOtp,
-    isClerkConfigured
+    isFirebaseConfigured
   } = useAuth();
 
   const { currentLang } = useLanguage();
@@ -57,7 +104,7 @@ export const AuthModal = () => {
     }
   }, [isAuthModalOpen, authModalMode, initialPendingPhone]);
 
-  // Resend cooldown timer (kept for phone/SMS activation)
+  // Resend cooldown timer
   useEffect(() => {
     let timer;
     if (resendCooldown > 0) {
@@ -68,7 +115,7 @@ export const AuthModal = () => {
     return () => clearInterval(timer);
   }, [resendCooldown]);
 
-  // Focus OTP input when entering OTP step (kept for phone/SMS activation)
+  // Focus OTP input when entering OTP step
   useEffect(() => {
     if (step === 'otp' && otpInputRef.current) {
       setTimeout(() => otpInputRef.current?.focus(), 150);
@@ -98,7 +145,7 @@ export const AuthModal = () => {
       changeMobile: 'Change mobile number',
       resendIn: 'Resend in',
       signingInGoogle: 'Signing in with Google...',
-      clerkNotice: 'Clerk publishable key not detected. Please configure VITE_CLERK_PUBLISHABLE_KEY in .env.'
+      firebaseNotice: 'Firebase configuration not detected. Please add Firebase variables to your .env file.'
     },
     hi: {
       welcome: 'संचय में आपका स्वागत है',
@@ -119,7 +166,7 @@ export const AuthModal = () => {
       changeMobile: 'नंबर बदलें',
       resendIn: 'पुनः भेजें',
       signingInGoogle: 'Google से लॉगिन किया जा रहा है...',
-      clerkNotice: 'Clerk publishable key कॉन्फ़िगर नहीं है। कृपया .env फ़ाइल में VITE_CLERK_PUBLISHABLE_KEY जोड़ें।'
+      firebaseNotice: 'Firebase कॉन्फ़िगरेशन नहीं मिला। कृपया .env फ़ाइल में Firebase वेरिएबल्स जोड़ें।'
     },
     mr: {
       welcome: 'संचय मध्ये आपले स्वागत आहे',
@@ -140,7 +187,7 @@ export const AuthModal = () => {
       changeMobile: 'नंबर बदला',
       resendIn: 'पुन्हा पाठवा',
       signingInGoogle: 'Google सह लॉगिन करत आहे...',
-      clerkNotice: 'Clerk publishable key आढळली नाही. कृपया .env मध्ये VITE_CLERK_PUBLISHABLE_KEY सेट करा.'
+      firebaseNotice: 'Firebase कॉन्फिगरेशन आढळले नाही. कृपया .env मध्ये Firebase व्हेरिएबल्स जोडा.'
     },
     bn: {
       welcome: 'সঞ্চয়-এ আপনাকে স্বাগতম',
@@ -161,7 +208,7 @@ export const AuthModal = () => {
       changeMobile: 'নম্বর পরিবর্তন করুন',
       resendIn: 'পুনরায় পাঠান',
       signingInGoogle: 'Google দিয়ে সাইন ইন হচ্ছে...',
-      clerkNotice: 'Clerk publishable key পাওয়া যায়নি। .env ফাইলে VITE_CLERK_PUBLISHABLE_KEY কনফিগার করুন।'
+      firebaseNotice: 'Firebase কনফিগারেশন পাওয়া যায়নি। .env ফাইলে Firebase ভেরিয়েবল যোগ করুন।'
     },
     te: {
       welcome: 'సంచయ్‌కి స్వాగతం',
@@ -182,7 +229,7 @@ export const AuthModal = () => {
       changeMobile: 'నంబర్ మార్చండి',
       resendIn: 'మరలా పంపండి',
       signingInGoogle: 'Googleతో లాగిన్ అవుతోంది...',
-      clerkNotice: 'Clerk publishable key కనుగొనబడలేదు. .env లో VITE_CLERK_PUBLISHABLE_KEY జోడించండి.'
+      firebaseNotice: 'Firebase కాన్ఫిగరేషన్ కనుగొనబడలేదు. .env లో Firebase వేరియబుల్స్ జోడించండి.'
     }
   };
 
@@ -196,12 +243,12 @@ export const AuthModal = () => {
       await loginWithGoogle();
     } catch (err) {
       console.error('Google login error:', err);
-      setErrorMsg(err.message || 'Google login could not be completed. Please try again.');
+      setErrorMsg(getFriendlyErrorMessage(err, currentLang));
       setLoadingAction('');
     }
   };
 
-  // Handle Send Mobile OTP (preserved for future activation)
+  // Handle Send Mobile OTP
   const handleSendOtp = async (e) => {
     e?.preventDefault();
     const cleanDigits = mobileNumber.replace(/\D/g, '');
@@ -220,13 +267,13 @@ export const AuthModal = () => {
       setStep('otp');
       setResendCooldown(30);
     } catch (err) {
-      setErrorMsg(err.message || 'Failed to send SMS OTP. Please try again.');
+      setErrorMsg(getFriendlyErrorMessage(err, currentLang));
     } finally {
       setLoadingAction('');
     }
   };
 
-  // Handle Verify OTP (preserved for future activation)
+  // Handle Verify OTP
   const handleVerifyOtp = async (e) => {
     e?.preventDefault();
     if (!otpCode || otpCode.trim().length !== 6) {
@@ -241,13 +288,13 @@ export const AuthModal = () => {
       await verifyMobileOtp(otpCode.trim());
       // Successful verification automatically closes the modal
     } catch (err) {
-      setErrorMsg(err.message || 'Incorrect or expired OTP. Please verify and try again.');
+      setErrorMsg(getFriendlyErrorMessage(err, currentLang));
     } finally {
       setLoadingAction('');
     }
   };
 
-  // Handle Resend OTP (preserved for future activation)
+  // Handle Resend OTP
   const handleResendOtp = async () => {
     if (resendCooldown > 0) return;
     setErrorMsg('');
@@ -259,7 +306,7 @@ export const AuthModal = () => {
       setSuccessMsg(currentLang === 'hi' ? 'नया OTP आपके मोबाइल पर भेजा गया।' : 'A new OTP has been sent to your mobile.');
       setTimeout(() => setSuccessMsg(''), 4000);
     } catch (err) {
-      setErrorMsg(err.message || 'Failed to resend OTP. Please wait before retrying.');
+      setErrorMsg(getFriendlyErrorMessage(err, currentLang));
     } finally {
       setLoadingAction('');
     }
@@ -274,6 +321,9 @@ export const AuthModal = () => {
     >
       <div className="w-full max-w-md bg-white rounded-3xl shadow-floating border border-slate-200/90 overflow-hidden flex flex-col my-auto animate-in zoom-in-95 duration-200">
         
+        {/* Invisible reCAPTCHA container for Firebase Phone Auth */}
+        <div id="recaptcha-container"></div>
+
         {/* Header with Title and Close */}
         <div className="p-5 sm:p-7 bg-gradient-to-br from-sanchay-navy-950 via-sanchay-navy-900 to-sanchay-navy-950 text-white relative">
           <button
@@ -310,14 +360,14 @@ export const AuthModal = () => {
         {/* Modal Body */}
         <div className="p-5 sm:p-7 space-y-5">
           
-          {/* Clerk setup notice if key is missing */}
-          {!isClerkConfigured && (
+          {/* Firebase setup notice if config is missing */}
+          {!isFirebaseConfigured && (
             <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
               <div>
-                <p className="font-bold">{l.clerkNotice}</p>
+                <p className="font-bold">{l.firebaseNotice}</p>
                 <p className="mt-1 text-[11px] text-amber-700">
-                  Refer to <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">CLERK_SETUP.md</code> for production setup instructions.
+                  Add <code className="font-mono bg-amber-100 px-1 py-0.5 rounded">VITE_FIREBASE_API_KEY</code> and project details to your environment.
                 </p>
               </div>
             </div>
@@ -338,7 +388,7 @@ export const AuthModal = () => {
             </div>
           )}
 
-          {/* GOOGLE AUTHENTICATION (PRIMARY & EXCLUSIVE FOR CURRENT DEPLOYMENT) */}
+          {/* MAIN AUTHENTICATION SCREEN: GOOGLE + INDIAN MOBILE OTP */}
           {(!ENABLE_MOBILE_SMS || step === 'select') && (
             <div className="space-y-4">
               
@@ -380,6 +430,66 @@ export const AuthModal = () => {
                 )}
               </button>
 
+              {/* OR DIVIDER */}
+              {ENABLE_MOBILE_SMS && (
+                <div className="relative flex items-center justify-center pt-2">
+                  <div className="border-t border-slate-200 w-full" />
+                  <span className="bg-white px-3 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">
+                    {l.orDivider}
+                  </span>
+                  <div className="border-t border-slate-200 w-full" />
+                </div>
+              )}
+
+              {/* MOBILE NUMBER INPUT FORM */}
+              {ENABLE_MOBILE_SMS && (
+                <form onSubmit={handleSendOtp} className="space-y-3.5">
+                  <div>
+                    <label className="block text-[11px] font-mono font-bold uppercase text-slate-600 mb-1.5 flex items-center gap-1.5">
+                      <Smartphone className="w-3.5 h-3.5 text-sanchay-emerald-600" />
+                      <span>{l.continueWithMobile}</span>
+                    </label>
+
+                    <div className="flex items-center rounded-2xl border border-slate-200 bg-slate-50/70 focus-within:bg-white focus-within:border-sanchay-emerald-500 focus-within:ring-2 focus-within:ring-sanchay-emerald-500/20 transition-all overflow-hidden">
+                      <div className="px-3.5 py-3 bg-slate-100/90 text-slate-700 font-mono font-bold text-xs flex items-center gap-1.5 border-r border-slate-200 select-none shrink-0">
+                        <span className="text-sm">🇮🇳</span>
+                        <span>+91</span>
+                        <span className="text-slate-300 font-normal">|</span>
+                      </div>
+
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={10}
+                        value={mobileNumber}
+                        onChange={(e) => setMobileNumber(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        placeholder="98765 43210"
+                        className="w-full px-3.5 py-3 text-xs sm:text-sm font-mono tracking-wider bg-transparent outline-none text-sanchay-navy-950 placeholder:text-slate-400 placeholder:font-sans"
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loadingAction === 'sending_otp' || mobileNumber.length !== 10}
+                    className="w-full py-3.5 px-4 rounded-2xl bg-sanchay-emerald-600 hover:bg-sanchay-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider shadow-card hover:shadow-card-hover transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loadingAction === 'sending_otp' ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>{l.sendingOtp}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{l.sendOtp}</span>
+                        <ArrowRight className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+                </form>
+              )}
+
               {/* Verified Citizen Benefits list */}
               <div className="pt-2 pb-1 space-y-2">
                 <div className="flex items-center gap-2.5 text-[11px] text-slate-600">
@@ -392,75 +502,14 @@ export const AuthModal = () => {
                 </div>
                 <div className="flex items-center gap-2.5 text-[11px] text-slate-600">
                   <span className="w-4 h-4 rounded-full bg-sanchay-emerald-100 text-sanchay-emerald-700 flex items-center justify-center text-[10px] font-bold shrink-0">✓</span>
-                  <span>{currentLang === 'hi' ? '1-क्लिक सुरक्षित Google साइन-इन — पासवर्ड याद रखने की जरूरत नहीं' : 'Instant secure Google sign-in — no passwords to remember'}</span>
+                  <span>{currentLang === 'hi' ? '1-क्लिक सुरक्षित Google या मोबाइल OTP साइन-इन — पासवर्ड याद रखने की जरूरत नहीं' : 'Instant 1-click Google or Mobile OTP sign-in — no passwords to remember'}</span>
                 </div>
               </div>
-
-              {/* DORMANT MOBILE PHONE NUMBER SECTION (ACTIVATED WHEN ENABLE_MOBILE_SMS = TRUE) */}
-              {ENABLE_MOBILE_SMS && (
-                <>
-                  {/* OR DIVIDER */}
-                  <div className="relative flex items-center justify-center pt-2">
-                    <div className="border-t border-slate-200 w-full" />
-                    <span className="bg-white px-3 text-[11px] font-mono font-bold uppercase tracking-wider text-slate-400">
-                      {l.orDivider}
-                    </span>
-                    <div className="border-t border-slate-200 w-full" />
-                  </div>
-
-                  {/* MOBILE NUMBER INPUT FORM */}
-                  <form onSubmit={handleSendOtp} className="space-y-3.5">
-                    <div>
-                      <label className="block text-[11px] font-mono font-bold uppercase text-slate-600 mb-1.5 flex items-center gap-1.5">
-                        <Smartphone className="w-3.5 h-3.5 text-sanchay-emerald-600" />
-                        <span>{l.continueWithMobile}</span>
-                      </label>
-
-                      <div className="flex items-center rounded-2xl border border-slate-200 bg-slate-50/70 focus-within:bg-white focus-within:border-sanchay-emerald-500 focus-within:ring-2 focus-within:ring-sanchay-emerald-500/20 transition-all overflow-hidden">
-                        <div className="px-3.5 py-3 bg-slate-100/90 text-slate-700 font-mono font-bold text-xs flex items-center gap-1.5 border-r border-slate-200 select-none shrink-0">
-                          <span className="text-sm">🇮🇳</span>
-                          <span>+91</span>
-                          <span className="text-slate-300 font-normal">|</span>
-                        </div>
-
-                        <input
-                          type="tel"
-                          inputMode="numeric"
-                          pattern="[0-9]*"
-                          maxLength={10}
-                          value={mobileNumber}
-                          onChange={(e) => setMobileNumber(e.target.value.replace(/\D/g, '').slice(0, 10))}
-                          placeholder="98765 43210"
-                          className="w-full px-3.5 py-3 text-xs sm:text-sm font-mono tracking-wider bg-transparent outline-none text-sanchay-navy-950 placeholder:text-slate-400 placeholder:font-sans"
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={loadingAction === 'sending_otp' || mobileNumber.length !== 10}
-                      className="w-full py-3.5 px-4 rounded-2xl bg-sanchay-emerald-600 hover:bg-sanchay-emerald-700 text-white font-extrabold text-xs uppercase tracking-wider shadow-card hover:shadow-card-hover transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {loadingAction === 'sending_otp' ? (
-                        <>
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                          <span>{l.sendingOtp}</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>{l.sendOtp}</span>
-                          <ArrowRight className="w-4 h-4" />
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </>
-              )}
 
             </div>
           )}
 
-          {/* DORMANT 6-DIGIT OTP SCREEN (ACTIVATED WHEN ENABLE_MOBILE_SMS = TRUE) */}
+          {/* 6-DIGIT OTP SCREEN */}
           {ENABLE_MOBILE_SMS && step === 'otp' && (
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
@@ -539,7 +588,7 @@ export const AuthModal = () => {
           {/* Privacy and Sovereign Disclaimer */}
           <div className="pt-2 text-center text-[10px] text-slate-400 font-sans flex items-center justify-center gap-1.5 border-t border-slate-100">
             <Lock className="w-3 h-3 text-slate-400 shrink-0" />
-            <span>256-bit encrypted authentication powered by Clerk & Government of India verified protocols</span>
+            <span>256-bit encrypted authentication powered by Firebase & Government of India verified protocols</span>
           </div>
 
         </div>
@@ -548,4 +597,3 @@ export const AuthModal = () => {
     </div>
   );
 };
-

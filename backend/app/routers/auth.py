@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, EmailStr
 from app.services.auth_service import auth_service, verify_token
-from app.services.clerk_service import clerk_service, ClerkVerificationError
+from app.services.firebase_service import firebase_service, FirebaseVerificationError
 
 router = APIRouter(prefix="/auth", tags=["User Accounts & Authentication"])
 
@@ -48,16 +48,19 @@ class UpdateProfileRequest(BaseModel):
     profession: Optional[str] = None
 
 
-class ClerkSyncRequest(BaseModel):
+class UserSyncRequest(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     full_name: Optional[str] = None
     profile_photo: Optional[str] = None
 
+# Backward compatibility alias
+ClerkSyncRequest = UserSyncRequest
+
 
 def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
     """
-    Production-grade FastAPI dependency verifying Clerk session token.
+    Production-grade FastAPI dependency verifying Firebase session token.
     Never trusts user_id from frontend payload. Validates signature, issuer,
     and expiration, then extracts verified identity and loads/syncs MongoDB document.
     """
@@ -67,38 +70,28 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
     parts = authorization.strip().split(" ")
     token = parts[1] if len(parts) == 2 else parts[0]
     
-    # 1. Verify with Clerk cryptographic service (JWKS / RS256 / HS256 in test mode)
+    # 1. Verify with Firebase cryptographic service (Admin SDK in prod / mock in test mode)
     try:
-        clerk_payload = clerk_service.verify_token(token)
-        clerk_user_id = clerk_payload.get("sub")
-        if not clerk_user_id:
-            raise HTTPException(status_code=401, detail="Invalid token: missing subject claim.")
+        firebase_payload = firebase_service.verify_token(token)
+        firebase_uid = firebase_payload.get("uid") or firebase_payload.get("sub")
+        if not firebase_uid:
+            raise HTTPException(status_code=401, detail="Invalid token: missing subject/UID claim.")
 
-        email = clerk_payload.get("email") or clerk_payload.get("email_address")
-        phone = clerk_payload.get("phone_number") or clerk_payload.get("phone")
-        full_name = clerk_payload.get("name") or clerk_payload.get("full_name")
-        image_url = clerk_payload.get("picture") or clerk_payload.get("image_url")
+        email = firebase_payload.get("email")
+        phone = firebase_payload.get("phone_number") or firebase_payload.get("phone")
+        full_name = firebase_payload.get("name") or firebase_payload.get("full_name")
+        image_url = firebase_payload.get("picture") or firebase_payload.get("image_url")
 
-        if not (email or phone):
-            details = clerk_service.get_clerk_user_details(clerk_user_id)
-            if details:
-                email = details.get("email") or email
-                phone = details.get("phone") or phone
-                full_name = details.get("full_name") or full_name
-                image_url = details.get("image_url") or image_url
-
-        user = auth_service.sync_clerk_user(
-            clerk_user_id=clerk_user_id,
+        user = auth_service.sync_firebase_user(
+            firebase_uid=firebase_uid,
             email=email,
             phone=phone,
             full_name=full_name,
             profile_photo=image_url
         )
         return user
-    except ClerkVerificationError as e:
-        # Re-raise explicit expired/invalid token errors
-        if "expired" in str(e).lower():
-            raise HTTPException(status_code=401, detail=str(e))
+    except FirebaseVerificationError as e:
+        raise HTTPException(status_code=401, detail=str(e))
     except HTTPException:
         raise
     except Exception:
@@ -116,13 +109,13 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
 
 def get_current_user_payload(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
     """Compatibility adapter returning payload dictionary with verified user_id."""
-    return {"user_id": user["user_id"], "clerk_user_id": user.get("clerk_user_id"), "email": user.get("email")}
+    return {"user_id": user["user_id"], "firebase_uid": user.get("firebase_uid"), "email": user.get("email")}
 
 
 @router.post("/sync")
-def sync_clerk(req: ClerkSyncRequest, user: Dict[str, Any] = Depends(get_current_user)):
-    synced = auth_service.sync_clerk_user(
-        clerk_user_id=user.get("clerk_user_id") or user["user_id"],
+def sync_user(req: UserSyncRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    synced = auth_service.sync_firebase_user(
+        firebase_uid=user.get("firebase_uid") or user["user_id"],
         email=req.email,
         phone=req.phone,
         full_name=req.full_name,

@@ -275,7 +275,7 @@ export async function getEffectiveToken(explicitToken = null) {
       const t = await authTokenProvider();
       if (t) return t;
     } catch (e) {
-      console.warn('Error resolving Clerk session token:', e);
+      console.warn('Error resolving Firebase session token:', e);
     }
   }
   return null;
@@ -333,7 +333,7 @@ export async function loginWithGoogleApi(googleData) {
   return data;
 }
 
-export async function syncClerkUserApi(userData = {}, explicitToken = null) {
+export async function syncFirebaseUserApi(userData = {}, explicitToken = null) {
   const token = await getEffectiveToken(explicitToken);
   if (!token) return null;
   const res = await fetch(`${API_BASE_URL}/api/auth/sync`, {
@@ -347,6 +347,8 @@ export async function syncClerkUserApi(userData = {}, explicitToken = null) {
   if (!res.ok) return null;
   return await res.json();
 }
+
+export const syncClerkUserApi = syncFirebaseUserApi;
 
 export async function updateUserProfileApi(profileData, explicitToken = null) {
   const token = await getEffectiveToken(explicitToken);

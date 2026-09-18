@@ -49,7 +49,7 @@ export const ProtectedRoute = ({ children }) => {
               onClick={() => openAuthModal('login')}
               className="w-full py-3.5 px-6 rounded-2xl bg-sanchay-emerald-600 hover:bg-sanchay-emerald-700 text-white font-extrabold text-xs sm:text-sm uppercase tracking-wider shadow-card transition-all flex items-center justify-center gap-2 cursor-pointer"
             >
-              <span>Continue with Google</span>
+              <span>Sign In to Continue</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
