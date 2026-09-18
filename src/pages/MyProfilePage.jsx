@@ -257,13 +257,14 @@ export const MyProfilePage = () => {
                 {currentLang === 'hi' ? 'लॉगिन करें' : 'Citizen Login'}
               </button>
               <button
-                onClick={() => openAuthModal('register')}
+                onClick={() => openAuthModal('login')}
                 className="w-full sm:w-auto px-6 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white text-xs font-extrabold uppercase tracking-wider shadow-card transition-all cursor-pointer"
               >
-                {currentLang === 'hi' ? 'नया खाता बनाएं' : 'Create Account'}
+                {currentLang === 'hi' ? 'संचय में शामिल हों' : 'Join SANCHAY'}
               </button>
             </div>
           </div>
+
         ) : (
           <div className="space-y-8">
             

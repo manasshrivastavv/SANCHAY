@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Header, Depends, Body
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, EmailStr
 from app.services.auth_service import auth_service, verify_token
+from app.services.clerk_service import clerk_service, ClerkVerificationError
 
 router = APIRouter(prefix="/auth", tags=["User Accounts & Authentication"])
 
@@ -40,16 +41,105 @@ class PlanActionRequest(BaseModel):
     scheme_id: str
 
 
-def get_current_user_payload(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+class UpdateProfileRequest(BaseModel):
+    full_name: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    profession: Optional[str] = None
+
+
+class ClerkSyncRequest(BaseModel):
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    full_name: Optional[str] = None
+    profile_photo: Optional[str] = None
+
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """
+    Production-grade FastAPI dependency verifying Clerk session token.
+    Never trusts user_id from frontend payload. Validates signature, issuer,
+    and expiration, then extracts verified identity and loads/syncs MongoDB document.
+    """
     if not authorization:
         raise HTTPException(status_code=401, detail="Authentication required. Please log in.")
     
-    parts = authorization.split(" ")
+    parts = authorization.strip().split(" ")
     token = parts[1] if len(parts) == 2 else parts[0]
-    payload = verify_token(token)
-    if not payload:
-        raise HTTPException(status_code=401, detail="Invalid or expired session token. Please log in again.")
-    return payload
+    
+    # 1. Verify with Clerk cryptographic service (JWKS / RS256 / HS256 in test mode)
+    try:
+        clerk_payload = clerk_service.verify_token(token)
+        clerk_user_id = clerk_payload.get("sub")
+        if not clerk_user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing subject claim.")
+
+        email = clerk_payload.get("email") or clerk_payload.get("email_address")
+        phone = clerk_payload.get("phone_number") or clerk_payload.get("phone")
+        full_name = clerk_payload.get("name") or clerk_payload.get("full_name")
+        image_url = clerk_payload.get("picture") or clerk_payload.get("image_url")
+
+        if not (email or phone):
+            details = clerk_service.get_clerk_user_details(clerk_user_id)
+            if details:
+                email = details.get("email") or email
+                phone = details.get("phone") or phone
+                full_name = details.get("full_name") or full_name
+                image_url = details.get("image_url") or image_url
+
+        user = auth_service.sync_clerk_user(
+            clerk_user_id=clerk_user_id,
+            email=email,
+            phone=phone,
+            full_name=full_name,
+            profile_photo=image_url
+        )
+        return user
+    except ClerkVerificationError as e:
+        # Re-raise explicit expired/invalid token errors
+        if "expired" in str(e).lower():
+            raise HTTPException(status_code=401, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    # 2. Fallback to legacy HMAC signed token for backwards compatibility in existing unit tests
+    legacy_payload = verify_token(token)
+    if legacy_payload and legacy_payload.get("user_id"):
+        user = auth_service.get_current_user(legacy_payload["user_id"])
+        if user:
+            return user
+
+    raise HTTPException(status_code=401, detail="Invalid or expired session token. Please log in again.")
+
+
+def get_current_user_payload(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Compatibility adapter returning payload dictionary with verified user_id."""
+    return {"user_id": user["user_id"], "clerk_user_id": user.get("clerk_user_id"), "email": user.get("email")}
+
+
+@router.post("/sync")
+def sync_clerk(req: ClerkSyncRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    synced = auth_service.sync_clerk_user(
+        clerk_user_id=user.get("clerk_user_id") or user["user_id"],
+        email=req.email,
+        phone=req.phone,
+        full_name=req.full_name,
+        profile_photo=req.profile_photo
+    )
+    return {"status": "success", "user": synced}
+
+
+@router.put("/profile")
+def update_profile(req: UpdateProfileRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    try:
+        updated = auth_service.update_profile(user["user_id"], req.dict(exclude_unset=True))
+        return {"status": "success", "user": updated}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/register")
@@ -107,18 +197,15 @@ class AvatarRequest(BaseModel):
 
 
 @router.get("/me")
-def get_me(payload: Dict[str, Any] = Depends(get_current_user_payload)):
-    user = auth_service.get_current_user(payload["user_id"])
-    if not user:
-        raise HTTPException(status_code=404, detail="User account not found.")
+def get_me(user: Dict[str, Any] = Depends(get_current_user)):
     return user
 
 
 @router.post("/profile-photo")
-def update_profile_photo(req: ProfilePhotoRequest, payload: Dict[str, Any] = Depends(get_current_user_payload)):
+def update_profile_photo(req: ProfilePhotoRequest, user: Dict[str, Any] = Depends(get_current_user)):
     try:
-        user = auth_service.update_profile_photo(payload["user_id"], req.profile_photo)
-        return {"status": "success", "user": user}
+        updated_user = auth_service.update_profile_photo(user["user_id"], req.profile_photo)
+        return {"status": "success", "user": updated_user}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -126,10 +213,10 @@ def update_profile_photo(req: ProfilePhotoRequest, payload: Dict[str, Any] = Dep
 
 
 @router.post("/avatar")
-def update_avatar(req: AvatarRequest, payload: Dict[str, Any] = Depends(get_current_user_payload)):
+def update_avatar(req: AvatarRequest, user: Dict[str, Any] = Depends(get_current_user)):
     try:
-        user = auth_service.update_avatar(payload["user_id"], req.avatar_id)
-        return {"status": "success", "user": user}
+        updated_user = auth_service.update_avatar(user["user_id"], req.avatar_id)
+        return {"status": "success", "user": updated_user}
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -137,8 +224,9 @@ def update_avatar(req: AvatarRequest, payload: Dict[str, Any] = Depends(get_curr
 
 
 @router.get("/plans")
-def get_saved_plans(payload: Dict[str, Any] = Depends(get_current_user_payload)):
-    schemes = auth_service.get_saved_schemes_details(payload["user_id"])
+def get_saved_plans(user: Dict[str, Any] = Depends(get_current_user)):
+    schemes = auth_service.get_saved_schemes_details(user["user_id"])
+
     
     # Standardize output for frontend
     clean_list = []
@@ -281,18 +369,19 @@ def get_saved_plans(payload: Dict[str, Any] = Depends(get_current_user_payload))
 
 
 @router.post("/plans/add")
-def add_saved_plan(req: PlanActionRequest, payload: Dict[str, Any] = Depends(get_current_user_payload)):
+def add_saved_plan(req: PlanActionRequest, user: Dict[str, Any] = Depends(get_current_user)):
     try:
-        saved_plans = auth_service.add_saved_plan(payload["user_id"], req.scheme_id)
+        saved_plans = auth_service.add_saved_plan(user["user_id"], req.scheme_id)
         return {"status": "success", "message": "Scheme added to My Plans.", "saved_plans": saved_plans}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/plans/remove")
-def remove_saved_plan(req: PlanActionRequest, payload: Dict[str, Any] = Depends(get_current_user_payload)):
+def remove_saved_plan(req: PlanActionRequest, user: Dict[str, Any] = Depends(get_current_user)):
     try:
-        saved_plans = auth_service.remove_saved_plan(payload["user_id"], req.scheme_id)
+        saved_plans = auth_service.remove_saved_plan(user["user_id"], req.scheme_id)
         return {"status": "success", "message": "Scheme removed from My Plans.", "saved_plans": saved_plans}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+

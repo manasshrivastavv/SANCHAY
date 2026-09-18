@@ -15,10 +15,11 @@ const getApiBaseUrl = () => {
     return trimmed;
   }
   if (isProd) {
-    return '';
+    return 'https://sanchay-backend-2uw5.onrender.com';
   }
   return 'http://127.0.0.1:8000';
 };
+
 
 export const API_BASE_URL = getApiBaseUrl();
 import { calculateLocalRecommendations } from './clientEngine';
@@ -258,8 +259,27 @@ export async function querySakhi(queryText, language = 'en') {
 }
 
 // -------------------------------------------------------------
-// Authentication & My Plans API
+// Authentication Token Provider (Clerk Integration)
 // -------------------------------------------------------------
+
+let authTokenProvider = null;
+
+export function setAuthTokenProvider(fn) {
+  authTokenProvider = fn;
+}
+
+export async function getEffectiveToken(explicitToken = null) {
+  if (explicitToken) return explicitToken;
+  if (typeof authTokenProvider === 'function') {
+    try {
+      const t = await authTokenProvider();
+      if (t) return t;
+    } catch (e) {
+      console.warn('Error resolving Clerk session token:', e);
+    }
+  }
+  return null;
+}
 
 export async function registerUser(userData) {
   const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
@@ -313,7 +333,41 @@ export async function loginWithGoogleApi(googleData) {
   return data;
 }
 
-export async function getCurrentUser(token) {
+export async function syncClerkUserApi(userData = {}, explicitToken = null) {
+  const token = await getEffectiveToken(explicitToken);
+  if (!token) return null;
+  const res = await fetch(`${API_BASE_URL}/api/auth/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(userData)
+  });
+  if (!res.ok) return null;
+  return await res.json();
+}
+
+export async function updateUserProfileApi(profileData, explicitToken = null) {
+  const token = await getEffectiveToken(explicitToken);
+  if (!token) throw new Error('Authentication required.');
+  const res = await fetch(`${API_BASE_URL}/api/auth/profile`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(profileData)
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || 'Failed to update profile.');
+  }
+  return data;
+}
+
+export async function getCurrentUser(explicitToken = null) {
+  const token = await getEffectiveToken(explicitToken);
   if (!token) return null;
   const isProd = isProductionDomain();
   if (isProd && (!API_BASE_URL || API_BASE_URL.includes('127.0.0.1') || API_BASE_URL.includes('localhost'))) {
@@ -339,7 +393,8 @@ export async function getCurrentUser(token) {
   }
 }
 
-export async function uploadProfilePhotoApi(token, photoData) {
+export async function uploadProfilePhotoApi(explicitToken, photoData) {
+  const token = await getEffectiveToken(explicitToken);
   if (!token) throw new Error('Authentication required.');
   const isProd = isProductionDomain();
   if (isProd && (!API_BASE_URL || API_BASE_URL.includes('127.0.0.1') || API_BASE_URL.includes('localhost'))) {
@@ -361,7 +416,8 @@ export async function uploadProfilePhotoApi(token, photoData) {
   return data;
 }
 
-export async function updateAvatarApi(token, avatarId) {
+export async function updateAvatarApi(explicitToken, avatarId) {
+  const token = await getEffectiveToken(explicitToken);
   if (!token) throw new Error('Authentication required.');
   const isProd = isProductionDomain();
   if (isProd && (!API_BASE_URL || API_BASE_URL.includes('127.0.0.1') || API_BASE_URL.includes('localhost'))) {
@@ -383,7 +439,8 @@ export async function updateAvatarApi(token, avatarId) {
   return data;
 }
 
-export async function fetchSavedPlans(token) {
+export async function fetchSavedPlans(explicitToken = null) {
+  const token = await getEffectiveToken(explicitToken);
   if (!token) return [];
   const isProd = isProductionDomain();
   if (isProd && (!API_BASE_URL || API_BASE_URL.includes('127.0.0.1') || API_BASE_URL.includes('localhost'))) {
@@ -406,7 +463,8 @@ export async function fetchSavedPlans(token) {
   }
 }
 
-export async function addSavedPlan(schemeId, token) {
+export async function addSavedPlan(schemeId, explicitToken = null) {
+  const token = await getEffectiveToken(explicitToken);
   if (!token) throw new Error('Authentication required.');
   const isProd = isProductionDomain();
   if (isProd && (!API_BASE_URL || API_BASE_URL.includes('127.0.0.1') || API_BASE_URL.includes('localhost'))) {
@@ -438,7 +496,8 @@ export async function addSavedPlan(schemeId, token) {
   }
 }
 
-export async function removeSavedPlan(schemeId, token) {
+export async function removeSavedPlan(schemeId, explicitToken = null) {
+  const token = await getEffectiveToken(explicitToken);
   if (!token) throw new Error('Authentication required.');
   const isProd = isProductionDomain();
   if (isProd && (!API_BASE_URL || API_BASE_URL.includes('127.0.0.1') || API_BASE_URL.includes('localhost'))) {
@@ -469,6 +528,7 @@ export async function removeSavedPlan(schemeId, token) {
     throw err;
   }
 }
+
 
 // ==========================================
 // LIC MASTER API CLIENTS

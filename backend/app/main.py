@@ -34,13 +34,37 @@ app = FastAPI(
 )
 
 # CORS Configuration
+def get_allowed_origins() -> list:
+    origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "https://sanchay-seven.vercel.app",
+    ]
+
+    fe_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+    if fe_url and fe_url not in origins:
+        origins.append(fe_url)
+    custom_origins = os.getenv("ALLOWED_ORIGINS", "")
+    if custom_origins:
+        for o in custom_origins.split(","):
+            cleaned = o.strip().rstrip("/")
+            if cleaned and cleaned not in origins:
+                origins.append(cleaned)
+    return origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_allowed_origins(),
+    allow_origin_regex=r"https:\/\/.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 
 @app.on_event("startup")
@@ -113,7 +137,9 @@ def api_health():
         "status": "healthy",
         "database": "connected",
         "total_active_schemes": total_active,
-        "total_verified_schemes": total_verified
+        "total_verified_schemes": total_verified,
+        "active_verified_schemes": total_verified,
+        "supported_categories": [c["id"] for c in schemes.MASTER_CATEGORIES]
     }
 
 

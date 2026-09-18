@@ -81,26 +81,41 @@ def generate_verification_code() -> str:
 
 def sanitize_user_profile(user_doc: Dict[str, Any]) -> Dict[str, Any]:
     """Return public user profile without sensitive password hashes or raw codes."""
+    cid = user_doc.get("clerk_user_id") or user_doc.get("user_id")
     return {
-        "user_id": user_doc.get("user_id"),
-        "full_name": user_doc.get("full_name") or user_doc.get("name"),
+        "clerk_user_id": user_doc.get("clerk_user_id"),
+        "user_id": cid,
+        "full_name": user_doc.get("full_name") or user_doc.get("name") or "Citizen",
         "email": user_doc.get("email"),
-        "mobile": user_doc.get("mobile"),
+        "phone": user_doc.get("phone") or user_doc.get("mobile"),
+        "mobile": user_doc.get("phone") or user_doc.get("mobile"),
         "age": user_doc.get("age"),
         "gender": user_doc.get("gender"),
         "profession": user_doc.get("profession"),
         "avatar_id": user_doc.get("avatar_id"),
         "profile_photo": user_doc.get("profile_photo"),
-        "is_verified": user_doc.get("is_verified", False),
-        "auth_provider": user_doc.get("auth_provider", "local"),
+        "is_verified": user_doc.get("is_verified", True),
+        "auth_provider": user_doc.get("auth_provider", "clerk"),
         "saved_plans": user_doc.get("saved_plans", []),
-        "created_at": user_doc.get("created_at")
+        "created_at": user_doc.get("created_at"),
+        "updated_at": user_doc.get("updated_at")
     }
+
+
+
+def _user_filter(user: Dict[str, Any]) -> Dict[str, Any]:
+    """Helper to safely query user by _id, clerk_user_id, or user_id."""
+    if "_id" in user and user["_id"]:
+        return {"_id": user["_id"]}
+    if user.get("clerk_user_id"):
+        return {"clerk_user_id": user["clerk_user_id"]}
+    return {"user_id": user.get("user_id", "")}
 
 
 class AuthService:
     def __init__(self):
         pass
+
 
     def register(self, data: Dict[str, Any]) -> Dict[str, Any]:
         full_name = (data.get("full_name") or data.get("name") or "").strip()
@@ -304,38 +319,130 @@ class AuthService:
             "user": sanitize_user_profile(user)
         }
 
+    def sync_clerk_user(self, clerk_user_id: str, email: Optional[str] = None, phone: Optional[str] = None, full_name: Optional[str] = None, profile_photo: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Synchronize Clerk authenticated user with MongoDB users collection.
+        Uses clerk_user_id as the primary immutable identifier.
+        """
+        users_col = get_users_collection()
+        user = users_col.find_one({"$or": [{"clerk_user_id": clerk_user_id}, {"user_id": clerk_user_id}]})
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if user:
+
+
+            updates = {"updated_at": now_iso}
+            if not user.get("clerk_user_id"):
+                updates["clerk_user_id"] = clerk_user_id
+            if email and not user.get("email"):
+                updates["email"] = email
+            if phone and not (user.get("phone") or user.get("mobile")):
+                updates["phone"] = phone
+                updates["mobile"] = phone
+            if full_name and (not user.get("full_name") or user.get("full_name") == "Citizen"):
+                updates["full_name"] = full_name
+            if profile_photo and not user.get("profile_photo") and not user.get("avatar_id"):
+                updates["profile_photo"] = profile_photo
+            
+            if updates:
+                q = _user_filter(user)
+                users_col.update_one(q, {"$set": updates})
+                user = users_col.find_one(q)
+            return sanitize_user_profile(user)
+
+        # Check if there is an unlinked legacy user with matching verified email
+        if email:
+            legacy_user = users_col.find_one({"email": email.strip().lower(), "clerk_user_id": {"$exists": False}})
+            if legacy_user:
+                lq = _user_filter(legacy_user)
+                users_col.update_one(
+                    lq,
+                    {"$set": {
+                        "clerk_user_id": clerk_user_id,
+                        "updated_at": now_iso
+                    }}
+                )
+                updated = users_col.find_one(lq)
+                return sanitize_user_profile(updated)
+
+        # Create new SANCHAY citizen document
+        chosen_avatar = secrets.choice(["female_1", "female_2", "male_1", "male_2"])
+        new_user = {
+            "_id": clerk_user_id,
+            "clerk_user_id": clerk_user_id,
+            "user_id": clerk_user_id,
+            "full_name": full_name or "Citizen",
+            "email": email or "",
+            "phone": phone or "",
+            "mobile": phone or "",
+            "age": None,
+            "gender": "",
+            "profession": "",
+            "avatar_id": chosen_avatar,
+            "profile_photo": profile_photo,
+            "is_verified": True,
+            "auth_provider": "clerk",
+            "saved_plans": [],
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        users_col.insert_one(new_user)
+        return sanitize_user_profile(new_user)
+
     def get_current_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         users_col = get_users_collection()
-        user = users_col.find_one({"user_id": user_id})
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
         if not user:
             return None
         return sanitize_user_profile(user)
 
+    def update_profile(self, user_id: str, profile_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Update user profile fields (age, gender, profession, full_name)."""
+        users_col = get_users_collection()
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
+        if not user:
+            raise ValueError("User not found.")
+
+        updates = {"updated_at": datetime.now(timezone.utc).isoformat()}
+        if "full_name" in profile_data and profile_data["full_name"]:
+            updates["full_name"] = profile_data["full_name"].strip()
+        if "age" in profile_data:
+            updates["age"] = int(profile_data["age"]) if profile_data["age"] is not None else None
+        if "gender" in profile_data:
+            updates["gender"] = profile_data["gender"].strip()
+        if "profession" in profile_data:
+            updates["profession"] = profile_data["profession"].strip()
+
+        q = _user_filter(user)
+        users_col.update_one(q, {"$set": updates})
+        updated = users_col.find_one(q)
+        return sanitize_user_profile(updated)
+
     def add_saved_plan(self, user_id: str, scheme_id: str) -> List[str]:
         users_col = get_users_collection()
-        user = users_col.find_one({"user_id": user_id})
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
         if not user:
             raise ValueError("User not found.")
 
         saved_plans = user.get("saved_plans", [])
         if scheme_id not in saved_plans:
             saved_plans.append(scheme_id)
-            users_col.update_one({"user_id": user_id}, {"$set": {"saved_plans": saved_plans}})
+            users_col.update_one(_user_filter(user), {"$set": {"saved_plans": saved_plans, "updated_at": datetime.now(timezone.utc).isoformat()}})
         return saved_plans
 
     def remove_saved_plan(self, user_id: str, scheme_id: str) -> List[str]:
         users_col = get_users_collection()
-        user = users_col.find_one({"user_id": user_id})
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
         if not user:
             raise ValueError("User not found.")
 
         saved_plans = [s for s in user.get("saved_plans", []) if s != scheme_id]
-        users_col.update_one({"user_id": user_id}, {"$set": {"saved_plans": saved_plans}})
+        users_col.update_one(_user_filter(user), {"$set": {"saved_plans": saved_plans, "updated_at": datetime.now(timezone.utc).isoformat()}})
         return saved_plans
+
 
     def get_saved_schemes_details(self, user_id: str) -> List[Dict[str, Any]]:
         users_col = get_users_collection()
-        user = users_col.find_one({"user_id": user_id})
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
         if not user:
             return []
 
@@ -373,7 +480,6 @@ class AuthService:
         search_lic_numbers = set()
         for sid in saved_ids:
             s_str = str(sid).strip()
-            # Only consider as LIC identifier if it begins with lic/LIC, is purely digits, or contains 'uin'
             if s_str.lower().startswith("lic") or s_str.isdigit() or "uin" in s_str.lower():
                 search_lic_ids.add(s_str)
                 search_lic_ids.add(s_str.lower())
@@ -404,7 +510,7 @@ class AuthService:
 
         combined = gov_schemes + lic_plans + free_benefits
 
-        # 3. Fallback to static datasets if database was missing entries
+        # Fallback to static datasets if database was missing entries
         found_ids = {s.get("scheme_id") or s.get("id") or s.get("plan_id") for s in combined}
         missing_ids = set(saved_ids) - found_ids
         if missing_ids:
@@ -436,30 +542,32 @@ class AuthService:
 
     def update_profile_photo(self, user_id: str, photo_data: Optional[str]) -> Dict[str, Any]:
         users_col = get_users_collection()
-        user = users_col.find_one({"user_id": user_id})
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
         if not user:
             raise ValueError("User account not found.")
         
         users_col.update_one(
-            {"user_id": user_id},
-            {"$set": {"profile_photo": photo_data}}
+            _user_filter(user),
+            {"$set": {"profile_photo": photo_data, "updated_at": datetime.now(timezone.utc).isoformat()}}
         )
         user["profile_photo"] = photo_data
         return sanitize_user_profile(user)
 
     def update_avatar(self, user_id: str, avatar_id: str) -> Dict[str, Any]:
         users_col = get_users_collection()
-        user = users_col.find_one({"user_id": user_id})
+        user = users_col.find_one({"$or": [{"clerk_user_id": user_id}, {"user_id": user_id}]})
         if not user:
             raise ValueError("User account not found.")
         
         users_col.update_one(
-            {"user_id": user_id},
-            {"$set": {"avatar_id": avatar_id, "profile_photo": None}}
+            _user_filter(user),
+            {"$set": {"avatar_id": avatar_id, "profile_photo": None, "updated_at": datetime.now(timezone.utc).isoformat()}}
         )
         user["avatar_id"] = avatar_id
         user["profile_photo"] = None
+
         return sanitize_user_profile(user)
 
 
 auth_service = AuthService()
+
