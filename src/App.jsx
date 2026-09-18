@@ -4,6 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { LanguageProvider } from './context/LanguageContext';
 import { AuthProvider } from './context/AuthContext';
 import { AuthModal } from './components/auth/AuthModal';
+import { CompleteProfileModal } from './components/auth/CompleteProfileModal';
 import { ProtectedRoute } from './components/auth/ProtectedRoute';
 import { CustomCursor } from './components/common/CustomCursor';
 import { ScrollToTop } from './components/common/ScrollToTop';
@@ -63,6 +64,7 @@ export default function App() {
               />
             </Routes>
             <AuthModal />
+            <CompleteProfileModal />
           </div>
         </Router>
       </AuthProvider>

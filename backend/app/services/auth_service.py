@@ -96,6 +96,9 @@ def sanitize_user_profile(user_doc: Dict[str, Any]) -> Dict[str, Any]:
         "avatar_id": user_doc.get("avatar_id"),
         "profile_photo": user_doc.get("profile_photo"),
         "is_verified": user_doc.get("is_verified", True),
+        "is_profile_completed": user_doc.get("is_profile_completed", False),
+        "state": user_doc.get("state"),
+        "income": user_doc.get("income"),
         "auth_provider": user_doc.get("auth_provider", "firebase"),
         "saved_plans": user_doc.get("saved_plans", []),
         "created_at": user_doc.get("created_at"),
@@ -409,7 +412,7 @@ class AuthService:
         if not user:
             raise ValueError("User not found.")
 
-        updates = {"updated_at": datetime.now(timezone.utc).isoformat()}
+        updates = {"updated_at": datetime.now(timezone.utc).isoformat(), "is_profile_completed": True}
         if "full_name" in profile_data and profile_data["full_name"]:
             updates["full_name"] = profile_data["full_name"].strip()
         if "age" in profile_data:
@@ -418,6 +421,18 @@ class AuthService:
             updates["gender"] = profile_data["gender"].strip()
         if "profession" in profile_data:
             updates["profession"] = profile_data["profession"].strip()
+        if "mobile" in profile_data and profile_data["mobile"]:
+            m = str(profile_data["mobile"]).strip()
+            updates["mobile"] = m
+            updates["phone"] = m
+        elif "phone" in profile_data and profile_data["phone"]:
+            p = str(profile_data["phone"]).strip()
+            updates["phone"] = p
+            updates["mobile"] = p
+        if "state" in profile_data:
+            updates["state"] = profile_data["state"].strip() if profile_data["state"] else None
+        if "income" in profile_data:
+            updates["income"] = profile_data["income"].strip() if profile_data["income"] else None
 
         q = _user_filter(user)
         users_col.update_one(q, {"$set": updates})

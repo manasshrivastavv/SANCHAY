@@ -46,6 +46,10 @@ class UpdateProfileRequest(BaseModel):
     age: Optional[int] = None
     gender: Optional[str] = None
     profession: Optional[str] = None
+    mobile: Optional[str] = None
+    phone: Optional[str] = None
+    state: Optional[str] = None
+    income: Optional[str] = None
 
 
 class UserSyncRequest(BaseModel):

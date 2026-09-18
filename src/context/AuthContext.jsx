@@ -63,6 +63,9 @@ export const AuthProvider = ({ children }) => {
   const [authModalMode, setAuthModalMode] = useState('login'); // 'login' | 'otp' | 'limit_reached'
   const [pendingPhone, setPendingPhone] = useState('');
 
+  // Complete Profile Modal State (prompt after Google connect or on-demand)
+  const [isCompleteProfileModalOpen, setIsCompleteProfileModalOpen] = useState(false);
+
   // Firebase Phone Confirmation Result ref
   const confirmationResultRef = useRef(null);
 
@@ -115,14 +118,22 @@ export const AuthProvider = ({ children }) => {
           const fullName = fbUser.displayName || 'Citizen';
           const imageUrl = fbUser.photoURL || null;
 
+          let finalUserObj = null;
+
           try {
             // Check if profile exists in backend
             let backendUser = await getCurrentUser(idToken);
             if (backendUser && !backendUser.unauthorized) {
-              if (!isCancelled) {
-                setUser(backendUser);
-                localStorage.setItem(USER_KEY, JSON.stringify(backendUser));
-              }
+              finalUserObj = {
+                ...backendUser,
+                full_name: (backendUser.full_name && backendUser.full_name !== 'Citizen' && backendUser.full_name !== 'Not Specified')
+                  ? backendUser.full_name
+                  : (fullName || 'Citizen'),
+                email: backendUser.email || primaryEmail || '',
+                phone: backendUser.phone || backendUser.mobile || primaryPhone || '',
+                mobile: backendUser.mobile || backendUser.phone || primaryPhone || '',
+                profile_photo: backendUser.profile_photo || imageUrl || null
+              };
             } else {
               // Sync user into MongoDB via FastAPI
               const syncRes = await syncFirebaseUserApi({
@@ -132,28 +143,39 @@ export const AuthProvider = ({ children }) => {
                 profile_photo: imageUrl
               }, idToken);
 
-              if (syncRes?.user && !isCancelled) {
-                setUser(syncRes.user);
-                localStorage.setItem(USER_KEY, JSON.stringify(syncRes.user));
+              if (syncRes?.user) {
+                finalUserObj = {
+                  ...syncRes.user,
+                  full_name: (syncRes.user.full_name && syncRes.user.full_name !== 'Citizen' && syncRes.user.full_name !== 'Not Specified')
+                    ? syncRes.user.full_name
+                    : (fullName || 'Citizen'),
+                  email: syncRes.user.email || primaryEmail || '',
+                  phone: syncRes.user.phone || syncRes.user.mobile || primaryPhone || '',
+                  mobile: syncRes.user.mobile || syncRes.user.phone || primaryPhone || ''
+                };
               }
             }
           } catch (backendErr) {
             console.warn('[AUTH_CONTEXT] Backend profile sync offline, using local Firebase session:', backendErr);
-            if (!isCancelled) {
-              const fallbackUser = {
-                firebase_uid: fbUser.uid,
-                user_id: fbUser.uid,
-                full_name: fullName,
-                email: primaryEmail,
-                phone: primaryPhone,
-                mobile: primaryPhone,
-                profile_photo: imageUrl,
-                avatar_id: 'female_1',
-                saved_plans: user?.saved_plans || []
-              };
-              setUser(fallbackUser);
-              localStorage.setItem(USER_KEY, JSON.stringify(fallbackUser));
-            }
+          }
+
+          if (!finalUserObj) {
+            finalUserObj = {
+              firebase_uid: fbUser.uid,
+              user_id: fbUser.uid,
+              full_name: fullName,
+              email: primaryEmail,
+              phone: primaryPhone,
+              mobile: primaryPhone,
+              profile_photo: imageUrl,
+              avatar_id: 'female_1',
+              saved_plans: user?.saved_plans || []
+            };
+          }
+
+          if (!isCancelled) {
+            setUser(finalUserObj);
+            localStorage.setItem(USER_KEY, JSON.stringify(finalUserObj));
           }
         } catch (err) {
           console.error('[AUTH_CONTEXT] Error processing auth state change:', err);
@@ -194,6 +216,14 @@ export const AuthProvider = ({ children }) => {
     setIsAuthModalOpen(false);
   }, []);
 
+  const openCompleteProfileModal = useCallback(() => {
+    setIsCompleteProfileModalOpen(true);
+  }, []);
+
+  const closeCompleteProfileModal = useCallback(() => {
+    setIsCompleteProfileModalOpen(false);
+  }, []);
+
   // 1. CONTINUE WITH GOOGLE (Firebase OAuth popup)
   const loginWithGoogle = async () => {
     if (!auth || !googleProvider) {
@@ -202,6 +232,10 @@ export const AuthProvider = ({ children }) => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       closeAuthModal();
+      // Prompt citizen to complete demographic details right after Google connects
+      setTimeout(() => {
+        setIsCompleteProfileModalOpen(true);
+      }, 400);
       return result;
     } catch (err) {
       console.error('[FIREBASE_GOOGLE] Google Sign-In failed:', err);
@@ -340,12 +374,34 @@ export const AuthProvider = ({ children }) => {
   };
 
   const updateUserProfile = async (profileData) => {
-    const res = await updateUserProfileApi(profileData);
-    if (res?.user) {
-      setUser(res.user);
-      localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+    // 1. Instantly update local user state so UI reflects changes immediately
+    setUser((prev) => {
+      const updated = {
+        ...prev,
+        ...profileData,
+        is_profile_completed: true,
+        mobile: profileData.mobile || profileData.phone || prev?.mobile || '',
+        phone: profileData.phone || profileData.mobile || prev?.phone || ''
+      };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
+
+    // 2. Persist to backend MongoDB
+    try {
+      const res = await updateUserProfileApi(profileData);
+      if (res?.user) {
+        setUser((prev) => {
+          const finalUser = { ...prev, ...res.user, is_profile_completed: true };
+          localStorage.setItem(USER_KEY, JSON.stringify(finalUser));
+          return finalUser;
+        });
+      }
+      return res;
+    } catch (err) {
+      console.warn('Backend updateUserProfile offline, persisted locally:', err);
+      return { status: 'success', user: { ...profileData, is_profile_completed: true } };
     }
-    return res;
   };
 
   // Saved Plans Management
@@ -459,12 +515,15 @@ export const AuthProvider = ({ children }) => {
         isAuthModalOpen,
         authModalMode,
         pendingPhone,
+        isCompleteProfileModalOpen,
         guestUsageCount,
         maxFreeGuestUses: MAX_FREE_GUEST_USES,
         isFirebaseConfigured: !!auth,
         isClerkConfigured: false,
         openAuthModal,
         closeAuthModal,
+        openCompleteProfileModal,
+        closeCompleteProfileModal,
         loginWithGoogle,
         startMobileOtp,
         verifyMobileOtp,

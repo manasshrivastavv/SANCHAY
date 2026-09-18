@@ -50,7 +50,7 @@ const compressImage = (file) => {
 };
 
 export const MyProfilePage = () => {
-  const { user, token, isAuthenticated, logout, openAuthModal, savedPlanIds, uploadProfilePhoto, changeAvatar } = useAuth();
+  const { user, token, isAuthenticated, logout, openAuthModal, openCompleteProfileModal, savedPlanIds, uploadProfilePhoto, changeAvatar } = useAuth();
   const { t, currentLang } = useLanguage();
   const [sakhiChatOpen, setSakhiChatOpen] = useState(false);
   const [planStats, setPlanStats] = useState({ gov: 0, lic: 0, free: 0, total: 0 });
@@ -365,6 +365,15 @@ export const MyProfilePage = () => {
                         <Smile className="w-3.5 h-3.5 text-sanchay-emerald-600" />
                         <span>{currentLang === 'hi' ? 'अवतार चुनें' : 'Choose Avatar'}</span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={openCompleteProfileModal}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-sanchay-navy-950 hover:bg-sanchay-navy-900 text-white text-[11px] font-mono font-bold tracking-wide transition-colors cursor-pointer shadow-2xs"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-sanchay-gold-400" />
+                        <span>{currentLang === 'hi' ? 'प्रोफ़ाइल बदलें' : 'Edit Profile'}</span>
+                      </button>
                     </div>
 
                   </div>
@@ -391,9 +400,38 @@ export const MyProfilePage = () => {
               </div>
             </div>
 
+            {/* Profile Completion Prompt Banner if demographic fields are missing */}
+            {(!user?.age || !user?.gender || !user?.full_name || user?.full_name === 'Citizen' || user?.full_name === 'Not Specified' || (!user?.mobile && !user?.phone)) && (
+              <div className="p-5 sm:p-6 rounded-3xl bg-gradient-to-r from-amber-500/15 via-amber-500/5 to-transparent border-2 border-amber-300/80 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm animate-in fade-in duration-200">
+                <div className="flex items-start gap-3.5">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-200 text-amber-800 flex items-center justify-center shrink-0 mt-0.5">
+                    <Sparkles className="w-5 h-5 text-amber-700" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm sm:text-base font-serif font-bold text-sanchay-navy-950">
+                      {currentLang === 'hi' ? 'अपनी नागरिक प्रोफाइल पूर्ण करें' : 'Complete Your Citizen Profile'}
+                    </h3>
+                    <p className="text-xs text-slate-600 font-sans mt-0.5 leading-relaxed">
+                      {currentLang === 'hi'
+                        ? 'सटीक सरकारी योजनाएं, LIC और मुफ्त नागरिक लाभ खोजने के लिए अपनी आयु, मोबाइल नंबर, लिंग और व्यवसाय जोड़ें।'
+                        : 'Add your age, mobile number, gender, and occupation to unlock 100% personalized scheme and benefit eligibility matching.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={openCompleteProfileModal}
+                  className="px-5 py-2.5 rounded-xl bg-sanchay-navy-950 hover:bg-sanchay-navy-900 text-white font-extrabold text-xs tracking-wider uppercase transition-all shadow-card flex items-center gap-2 shrink-0 cursor-pointer hover:scale-102 active:scale-98"
+                >
+                  <span>{currentLang === 'hi' ? 'विवरण भरें' : 'Complete Details'}</span>
+                  <ArrowRight className="w-3.5 h-3.5 text-sanchay-gold-400" />
+                </button>
+              </div>
+            )}
+
             {/* Registered Citizen Profile Details Card */}
             <div className="bg-white rounded-3xl border border-slate-200/90 shadow-card p-6 sm:p-8">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-6">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-4 mb-6">
                 <div>
                   <h2 className="text-lg font-serif font-bold text-sanchay-navy-950">
                     {currentLang === 'hi' ? 'पंजीकृत नागरिक विवरण' : 'Registered Citizen Profile'}
@@ -404,9 +442,19 @@ export const MyProfilePage = () => {
                       : 'These details are permanently associated with your account and used for accurate eligibility matching.'}
                   </p>
                 </div>
-                <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-mono font-bold uppercase tracking-wider">
-                  Private & Encrypted
-                </span>
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={openCompleteProfileModal}
+                    className="px-3.5 py-1.5 rounded-xl bg-sanchay-emerald-50 hover:bg-sanchay-emerald-100 text-sanchay-emerald-800 text-[11px] font-mono font-bold tracking-wide transition-colors cursor-pointer border border-sanchay-emerald-200 flex items-center gap-1.5"
+                  >
+                    <User className="w-3.5 h-3.5 text-sanchay-emerald-600" />
+                    <span>{currentLang === 'hi' ? 'विवरण बदलें' : 'Edit Details'}</span>
+                  </button>
+                  <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-700 text-[10px] font-mono font-bold uppercase tracking-wider">
+                    Private & Encrypted
+                  </span>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
@@ -439,7 +487,7 @@ export const MyProfilePage = () => {
                     <span>{currentLang === 'hi' ? 'मोबाइल नंबर' : 'Mobile Number'}</span>
                   </div>
                   <div className="font-mono text-sm text-sanchay-navy-950 font-semibold">
-                    {user?.mobile ? `+91 ${user.mobile}` : '—'}
+                    {user?.mobile ? (user.mobile.startsWith('+91') ? user.mobile : `+91 ${user.mobile}`) : (user?.phone ? (user.phone.startsWith('+91') ? user.phone : `+91 ${user.phone}`) : '—')}
                   </div>
                 </div>
 
@@ -476,19 +524,29 @@ export const MyProfilePage = () => {
                   </div>
                 </div>
 
-                {/* 7. Verification Status */}
+                {/* 7. State / UT */}
                 <div className="p-4 rounded-2xl bg-slate-50/70 border border-slate-200/80 space-y-1">
                   <div className="flex items-center gap-1.5 text-slate-400 text-[11px] font-mono font-bold uppercase tracking-wider">
-                    <ShieldCheck className="w-3.5 h-3.5 text-sanchay-emerald-600" />
-                    <span>{currentLang === 'hi' ? 'सत्यापन स्थिति' : 'Verification Status'}</span>
+                    <Award className="w-3.5 h-3.5 text-sanchay-emerald-600" />
+                    <span>{currentLang === 'hi' ? 'राज्य / केंद्र शासित प्रदेश' : 'State / UT'}</span>
                   </div>
-                  <div className="text-xs font-mono font-bold flex items-center gap-1 text-emerald-700">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>{user?.is_verified ? 'Verified Citizen' : 'Active Account'}</span>
+                  <div className="font-serif font-bold text-sm text-sanchay-navy-950 truncate">
+                    {user?.state || 'All India / Central'}
                   </div>
                 </div>
 
-                {/* 8. Account Created Date */}
+                {/* 8. Income */}
+                <div className="p-4 rounded-2xl bg-slate-50/70 border border-slate-200/80 space-y-1">
+                  <div className="flex items-center gap-1.5 text-slate-400 text-[11px] font-mono font-bold uppercase tracking-wider">
+                    <ShieldCheck className="w-3.5 h-3.5 text-sanchay-emerald-600" />
+                    <span>{currentLang === 'hi' ? 'पारिवारिक आय' : 'Household Income'}</span>
+                  </div>
+                  <div className="font-serif font-bold text-sm text-sanchay-navy-950 truncate">
+                    {user?.income || '—'}
+                  </div>
+                </div>
+
+                {/* 9. Account Created Date */}
                 <div className="p-4 rounded-2xl bg-slate-50/70 border border-slate-200/80 space-y-1 sm:col-span-2">
                   <div className="flex items-center gap-1.5 text-slate-400 text-[11px] font-mono font-bold uppercase tracking-wider">
                     <Clock className="w-3.5 h-3.5 text-sanchay-emerald-600" />
