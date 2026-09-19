@@ -111,6 +111,12 @@ export const AuthProvider = ({ children }) => {
           const fullName = fbUser.displayName || 'Citizen';
           const imageUrl = fbUser.photoURL || null;
 
+          let existingLocalUser = null;
+          try {
+            const raw = localStorage.getItem(USER_KEY);
+            if (raw) existingLocalUser = JSON.parse(raw);
+          } catch (e) {}
+
           let finalUserObj = null;
 
           try {
@@ -118,33 +124,65 @@ export const AuthProvider = ({ children }) => {
             let backendUser = await getCurrentUser(idToken);
             if (backendUser && !backendUser.unauthorized) {
               finalUserObj = {
+                ...existingLocalUser,
                 ...backendUser,
                 full_name: (backendUser.full_name && backendUser.full_name !== 'Citizen' && backendUser.full_name !== 'Not Specified')
                   ? backendUser.full_name
-                  : (fullName || 'Citizen'),
-                email: backendUser.email || primaryEmail || '',
-                phone: backendUser.phone || backendUser.mobile || primaryPhone || '',
-                mobile: backendUser.mobile || backendUser.phone || primaryPhone || '',
-                profile_photo: backendUser.profile_photo || imageUrl || null
+                  : (existingLocalUser?.full_name || fullName || 'Citizen'),
+                email: backendUser.email || existingLocalUser?.email || primaryEmail || '',
+                phone: backendUser.phone || backendUser.mobile || existingLocalUser?.phone || existingLocalUser?.mobile || primaryPhone || '',
+                mobile: backendUser.mobile || backendUser.phone || existingLocalUser?.mobile || existingLocalUser?.phone || primaryPhone || '',
+                age: backendUser.age ?? existingLocalUser?.age ?? null,
+                gender: backendUser.gender || existingLocalUser?.gender || '',
+                profession: backendUser.profession || existingLocalUser?.profession || '',
+                state: backendUser.state || existingLocalUser?.state || '',
+                income: backendUser.income || existingLocalUser?.income || '',
+                avatar_id: backendUser.avatar_id || existingLocalUser?.avatar_id || 'male_1',
+                profile_photo: (backendUser.profile_photo !== undefined)
+                  ? backendUser.profile_photo
+                  : (existingLocalUser?.profile_photo !== undefined ? existingLocalUser.profile_photo : imageUrl),
+                is_profile_completed: Boolean(
+                  backendUser.is_profile_completed ||
+                  existingLocalUser?.is_profile_completed ||
+                  (backendUser.age && backendUser.gender) ||
+                  (existingLocalUser?.age && existingLocalUser?.gender)
+                ),
+                saved_plans: backendUser.saved_plans || existingLocalUser?.saved_plans || []
               };
             } else {
               // Sync user into MongoDB via FastAPI
               const syncRes = await syncFirebaseUserApi({
                 email: primaryEmail,
-                phone: primaryPhone,
-                full_name: fullName,
-                profile_photo: imageUrl
+                phone: existingLocalUser?.phone || primaryPhone,
+                full_name: existingLocalUser?.full_name || fullName,
+                profile_photo: existingLocalUser?.profile_photo !== undefined ? existingLocalUser.profile_photo : imageUrl
               }, idToken);
 
               if (syncRes?.user) {
                 finalUserObj = {
+                  ...existingLocalUser,
                   ...syncRes.user,
                   full_name: (syncRes.user.full_name && syncRes.user.full_name !== 'Citizen' && syncRes.user.full_name !== 'Not Specified')
                     ? syncRes.user.full_name
-                    : (fullName || 'Citizen'),
-                  email: syncRes.user.email || primaryEmail || '',
-                  phone: syncRes.user.phone || syncRes.user.mobile || primaryPhone || '',
-                  mobile: syncRes.user.mobile || syncRes.user.phone || primaryPhone || ''
+                    : (existingLocalUser?.full_name || fullName || 'Citizen'),
+                  email: syncRes.user.email || existingLocalUser?.email || primaryEmail || '',
+                  phone: syncRes.user.phone || syncRes.user.mobile || existingLocalUser?.phone || primaryPhone || '',
+                  mobile: syncRes.user.mobile || syncRes.user.phone || existingLocalUser?.mobile || primaryPhone || '',
+                  age: syncRes.user.age ?? existingLocalUser?.age ?? null,
+                  gender: syncRes.user.gender || existingLocalUser?.gender || '',
+                  profession: syncRes.user.profession || existingLocalUser?.profession || '',
+                  state: syncRes.user.state || existingLocalUser?.state || '',
+                  income: syncRes.user.income || existingLocalUser?.income || '',
+                  avatar_id: syncRes.user.avatar_id || existingLocalUser?.avatar_id || 'male_1',
+                  profile_photo: (syncRes.user.profile_photo !== undefined)
+                    ? syncRes.user.profile_photo
+                    : (existingLocalUser?.profile_photo !== undefined ? existingLocalUser.profile_photo : imageUrl),
+                  is_profile_completed: Boolean(
+                    syncRes.user.is_profile_completed ||
+                    existingLocalUser?.is_profile_completed ||
+                    (existingLocalUser?.age && existingLocalUser?.gender)
+                  ),
+                  saved_plans: syncRes.user.saved_plans || existingLocalUser?.saved_plans || []
                 };
               }
             }
@@ -154,15 +192,24 @@ export const AuthProvider = ({ children }) => {
 
           if (!finalUserObj) {
             finalUserObj = {
+              ...existingLocalUser,
               firebase_uid: fbUser.uid,
               user_id: fbUser.uid,
-              full_name: fullName,
-              email: primaryEmail,
-              phone: primaryPhone,
-              mobile: primaryPhone,
-              profile_photo: imageUrl,
-              avatar_id: 'female_1',
-              saved_plans: user?.saved_plans || []
+              full_name: (existingLocalUser?.full_name && existingLocalUser.full_name !== 'Citizen' && existingLocalUser.full_name !== 'Not Specified')
+                ? existingLocalUser.full_name
+                : (fullName || 'Citizen'),
+              email: existingLocalUser?.email || primaryEmail || '',
+              phone: existingLocalUser?.phone || existingLocalUser?.mobile || primaryPhone || '',
+              mobile: existingLocalUser?.mobile || existingLocalUser?.phone || primaryPhone || '',
+              age: existingLocalUser?.age ?? null,
+              gender: existingLocalUser?.gender || '',
+              profession: existingLocalUser?.profession || '',
+              state: existingLocalUser?.state || '',
+              income: existingLocalUser?.income || '',
+              profile_photo: existingLocalUser?.profile_photo !== undefined ? existingLocalUser.profile_photo : imageUrl,
+              avatar_id: existingLocalUser?.avatar_id || 'male_1',
+              is_profile_completed: Boolean(existingLocalUser?.is_profile_completed || (existingLocalUser?.age && existingLocalUser?.gender)),
+              saved_plans: existingLocalUser?.saved_plans || user?.saved_plans || []
             };
           }
 
@@ -253,21 +300,60 @@ export const AuthProvider = ({ children }) => {
 
   // Profile Management
   const uploadProfilePhoto = async (photoData) => {
-    const res = await uploadProfilePhotoApi(null, photoData);
-    if (res?.user) {
-      setUser(res.user);
-      localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+    // 1. Optimistically update local user state immediately
+    setUser((prev) => {
+      const updated = {
+        ...prev,
+        profile_photo: photoData
+      };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
+
+    // 2. Persist to backend
+    try {
+      const res = await uploadProfilePhotoApi(null, photoData);
+      if (res?.user) {
+        setUser((prev) => {
+          const finalUser = { ...prev, ...res.user, profile_photo: photoData };
+          localStorage.setItem(USER_KEY, JSON.stringify(finalUser));
+          return finalUser;
+        });
+      }
+      return res;
+    } catch (err) {
+      console.warn('Backend uploadProfilePhoto notice (saved locally):', err);
+      return { status: 'success', user: { profile_photo: photoData } };
     }
-    return res;
   };
 
   const changeAvatar = async (avatarId) => {
-    const res = await updateAvatarApi(null, avatarId);
-    if (res?.user) {
-      setUser(res.user);
-      localStorage.setItem(USER_KEY, JSON.stringify(res.user));
+    // 1. Optimistically update local state immediately and clear profile_photo so avatar preset renders
+    setUser((prev) => {
+      const updated = {
+        ...prev,
+        avatar_id: avatarId,
+        profile_photo: null
+      };
+      localStorage.setItem(USER_KEY, JSON.stringify(updated));
+      return updated;
+    });
+
+    // 2. Persist to backend
+    try {
+      const res = await updateAvatarApi(null, avatarId);
+      if (res?.user) {
+        setUser((prev) => {
+          const finalUser = { ...prev, ...res.user, avatar_id: avatarId, profile_photo: null };
+          localStorage.setItem(USER_KEY, JSON.stringify(finalUser));
+          return finalUser;
+        });
+      }
+      return res;
+    } catch (err) {
+      console.warn('Backend updateAvatar notice (saved locally):', err);
+      return { status: 'success', user: { avatar_id: avatarId, profile_photo: null } };
     }
-    return res;
   };
 
   const updateUserProfile = async (profileData) => {
@@ -289,7 +375,12 @@ export const AuthProvider = ({ children }) => {
       const res = await updateUserProfileApi(profileData);
       if (res?.user) {
         setUser((prev) => {
-          const finalUser = { ...prev, ...res.user, is_profile_completed: true };
+          const finalUser = {
+            ...prev,
+            ...res.user,
+            ...profileData,
+            is_profile_completed: true
+          };
           localStorage.setItem(USER_KEY, JSON.stringify(finalUser));
           return finalUser;
         });

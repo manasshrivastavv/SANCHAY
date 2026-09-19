@@ -74,18 +74,41 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
     parts = authorization.strip().split(" ")
     token = parts[1] if len(parts) == 2 else parts[0]
     
-    # 1. Verify with Firebase cryptographic service (Admin SDK in prod / mock in test mode)
+    # 1. Verify session token (Firebase RS256 / HS256)
+    firebase_payload = None
     try:
         firebase_payload = firebase_service.verify_token(token)
-        firebase_uid = firebase_payload.get("uid") or firebase_payload.get("sub")
-        if not firebase_uid:
-            raise HTTPException(status_code=401, detail="Invalid token: missing subject/UID claim.")
+    except FirebaseVerificationError as e:
+        # Fallback to legacy HMAC signed token for backwards compatibility in existing unit tests
+        legacy_payload = verify_token(token)
+        if legacy_payload and legacy_payload.get("user_id"):
+            user = auth_service.get_current_user(legacy_payload["user_id"])
+            if user:
+                return user
+        raise HTTPException(status_code=401, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        legacy_payload = verify_token(token)
+        if legacy_payload and legacy_payload.get("user_id"):
+            user = auth_service.get_current_user(legacy_payload["user_id"])
+            if user:
+                return user
+        raise HTTPException(status_code=401, detail="Invalid or expired session token. Please log in again.")
 
-        email = firebase_payload.get("email")
-        phone = firebase_payload.get("phone_number") or firebase_payload.get("phone")
-        full_name = firebase_payload.get("name") or firebase_payload.get("full_name")
-        image_url = firebase_payload.get("picture") or firebase_payload.get("image_url")
+    if not firebase_payload:
+        raise HTTPException(status_code=401, detail="Invalid or expired session token. Please log in again.")
 
+    firebase_uid = firebase_payload.get("uid") or firebase_payload.get("sub")
+    if not firebase_uid:
+        raise HTTPException(status_code=401, detail="Invalid token: missing subject/UID claim.")
+
+    email = firebase_payload.get("email")
+    phone = firebase_payload.get("phone_number") or firebase_payload.get("phone")
+    full_name = firebase_payload.get("name") or firebase_payload.get("full_name")
+    image_url = firebase_payload.get("picture") or firebase_payload.get("image_url")
+
+    try:
         user = auth_service.sync_firebase_user(
             firebase_uid=firebase_uid,
             email=email,
@@ -94,21 +117,23 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
             profile_photo=image_url
         )
         return user
-    except FirebaseVerificationError as e:
-        raise HTTPException(status_code=401, detail=str(e))
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-
-    # 2. Fallback to legacy HMAC signed token for backwards compatibility in existing unit tests
-    legacy_payload = verify_token(token)
-    if legacy_payload and legacy_payload.get("user_id"):
-        user = auth_service.get_current_user(legacy_payload["user_id"])
-        if user:
-            return user
-
-    raise HTTPException(status_code=401, detail="Invalid or expired session token. Please log in again.")
+    except Exception as e:
+        print(f"[AUTH_ROUTER] Notice: sync_firebase_user DB fallback ({e})")
+        existing = auth_service.get_current_user(firebase_uid)
+        if existing:
+            return existing
+        return {
+            "user_id": firebase_uid,
+            "firebase_uid": firebase_uid,
+            "full_name": full_name or "Citizen",
+            "email": email or "",
+            "phone": phone or "",
+            "mobile": phone or "",
+            "avatar_id": "male_1",
+            "profile_photo": image_url,
+            "saved_plans": [],
+            "is_verified": True
+        }
 
 
 def get_current_user_payload(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:

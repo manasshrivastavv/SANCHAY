@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { getDefaultAvatarForUser, getAvatarById } from '../../data/avatars.jsx';
 import { ShieldCheck } from 'lucide-react';
 
@@ -19,6 +19,10 @@ export const UserAvatar = ({
 }) => {
   const [imageError, setImageError] = useState(false);
   const sizeClasses = SIZE_MAP[size] || size || 'w-10 h-10';
+
+  useEffect(() => {
+    setImageError(false);
+  }, [user?.profile_photo]);
 
   const avatarPreset = (user?.avatar_id && getAvatarById(user.avatar_id)) || getDefaultAvatarForUser(user);
   const hasCustomPhoto = Boolean(user?.profile_photo && !imageError);

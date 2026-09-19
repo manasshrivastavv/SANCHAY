@@ -55,16 +55,25 @@ export const CompleteProfileModal = () => {
 
   // Prefill when modal opens or user updates
   useEffect(() => {
-    if (isCompleteProfileModalOpen && user) {
-      setFullName((user.full_name && user.full_name !== 'Citizen' && user.full_name !== 'Not Specified') ? user.full_name : '');
-      setMobile(user.mobile || user.phone || '');
-      setAge(user.age ? String(user.age) : '');
-      setGender(user.gender || 'male');
-      setProfession(user.profession && user.profession !== 'General Citizen' ? user.profession : 'Salaried / Professional');
-      setState(user.state || 'Uttar Pradesh');
-      setIncome(user.income || '₹1 Lakh - ₹2.5 Lakhs');
-      setErrorMsg('');
-      setSuccessMsg('');
+    if (isCompleteProfileModalOpen) {
+      let activeUser = user;
+      if (!activeUser) {
+        try {
+          const saved = localStorage.getItem('sanchay_auth_user');
+          if (saved) activeUser = JSON.parse(saved);
+        } catch (e) {}
+      }
+      if (activeUser) {
+        setFullName((activeUser.full_name && activeUser.full_name !== 'Citizen' && activeUser.full_name !== 'Not Specified') ? activeUser.full_name : '');
+        setMobile(activeUser.mobile || activeUser.phone || '');
+        setAge(activeUser.age ? String(activeUser.age) : '');
+        setGender(activeUser.gender || 'male');
+        setProfession(activeUser.profession && activeUser.profession !== 'General Citizen' ? activeUser.profession : 'Salaried / Professional');
+        setState(activeUser.state || 'Uttar Pradesh');
+        setIncome(activeUser.income || '₹1 Lakh - ₹2.5 Lakhs');
+        setErrorMsg('');
+        setSuccessMsg('');
+      }
     }
   }, [isCompleteProfileModalOpen, user]);
 

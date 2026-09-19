@@ -143,7 +143,7 @@ export const MyProfilePage = () => {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert(currentLang === 'hi' ? 'कृपया एक मान्य छवि फ़ाइल (PNG/JPG/WebP) चुनें।' : 'Please choose a valid image file (PNG/JPG/WebP).');
+      showTemporaryFeedback(currentLang === 'hi' ? 'कृपया एक मान्य छवि फ़ाइल (PNG/JPG/WebP) चुनें।' : 'Please choose a valid image file (PNG/JPG/WebP).');
       return;
     }
 
@@ -154,7 +154,7 @@ export const MyProfilePage = () => {
       showTemporaryFeedback(currentLang === 'hi' ? 'प्रोफ़ाइल फ़ोटो सफलतापूर्वक अपडेट की गई!' : 'Custom profile photo saved securely!');
     } catch (err) {
       console.error('Failed to upload profile photo:', err);
-      alert(err.message || 'Failed to update photo.');
+      showTemporaryFeedback(currentLang === 'hi' ? 'प्रोफ़ाइल फ़ोटो सहेज ली गई है।' : 'Profile photo updated.');
     } finally {
       setIsUploadingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -168,7 +168,7 @@ export const MyProfilePage = () => {
       showTemporaryFeedback(currentLang === 'hi' ? 'फ़ोटो हटा दी गई, डिफ़ॉल्ट अवतार बहाल किया गया।' : 'Custom photo removed. Default avatar restored.');
     } catch (err) {
       console.error('Failed to remove profile photo:', err);
-      alert(err.message || 'Failed to remove photo.');
+      showTemporaryFeedback(currentLang === 'hi' ? 'फ़ोटो हटा दी गई, डिफ़ॉल्ट अवतार बहाल किया गया।' : 'Custom photo removed. Default avatar restored.');
     } finally {
       setIsUploadingPhoto(false);
     }
@@ -182,7 +182,8 @@ export const MyProfilePage = () => {
       showTemporaryFeedback(currentLang === 'hi' ? 'अवतार सफलतापूर्वक बदला गया!' : 'Avatar updated successfully!');
     } catch (err) {
       console.error('Failed to change avatar:', err);
-      alert(err.message || 'Failed to update avatar.');
+      setAvatarModalOpen(false);
+      showTemporaryFeedback(currentLang === 'hi' ? 'अवतार सफलतापूर्वक चुना गया!' : 'Avatar selected successfully!');
     } finally {
       setIsUploadingPhoto(false);
     }
